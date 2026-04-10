@@ -93,7 +93,7 @@ function shiftHue(color, degrees) {
   return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
 }
 
-function computeTraitDNA(traits) {
+function computeTraitDNA(traits, visualSeed = 0) {
   const dna = {
     hueShift: 0,
     bodySkewX: 0,
@@ -108,25 +108,46 @@ function computeTraitDNA(traits) {
     bodyBumps: [],
   };
 
-  for (const t of traits) {
+  // Seed-derived baseline offsets — give each run a unique starting identity
+  if (visualSeed) {
+    const seedSr = (n) => seededRandom(visualSeed, n + 100);
+    dna.hueShift += seedSr(0) * 40 - 20;
+    dna.bodySkewX += seedSr(1) * 0.04 - 0.02;
+    dna.bodySkewY += seedSr(2) * 0.03 - 0.015;
+    dna.trunkBend += seedSr(3) * 2 - 1;
+    dna.sproutCurl += seedSr(4) * 0.2 - 0.1;
+  }
+
+  for (let i = 0; i < traits.length; i++) {
+    const t = traits[i];
     const h = hashString(t.id);
     const sr = (n) => seededRandom(h, n);
 
-    // Each trait shifts the hue by ±12 degrees — accumulates to unique color
-    dna.hueShift += sr(1) * 24 - 12;
-    // Body asymmetry — slight left/right and top/bottom skew
-    dna.bodySkewX += sr(2) * 0.05 - 0.025;
-    dna.bodySkewY += sr(3) * 0.04 - 0.02;
-    // Trunk leans left or right
-    dna.trunkBend += sr(4) * 2.5 - 1.25;
-    // Sprout curls one direction
-    dna.sproutCurl += sr(5) * 0.3 - 0.15;
-    // Chance to add a sprout fork
+    // Diminishing weight: trait 0 = 1.0, trait 5 = 0.5, trait 10 = 0.33
+    // First 3 traits contribute ~70% of visual identity
+    const weight = 1.0 / (1 + i * 0.2);
+
+    dna.hueShift += (sr(1) * 24 - 12) * weight;
+    dna.bodySkewX += (sr(2) * 0.05 - 0.025) * weight;
+    dna.bodySkewY += (sr(3) * 0.04 - 0.02) * weight;
+    dna.trunkBend += (sr(4) * 2.5 - 1.25) * weight;
+    dna.sproutCurl += (sr(5) * 0.3 - 0.15) * weight;
     if (sr(6) > 0.7) dna.sproutForks += 1;
-    // Eye tweaks
-    dna.eyeSizeMod += sr(7) * 0.08 - 0.04;
-    dna.eyeSpacingMod += sr(8) * 0.12 - 0.06;
-    dna.pupilSquash += sr(9) * 0.3 - 0.15;
+    dna.eyeSizeMod += (sr(7) * 0.08 - 0.04) * weight;
+    dna.eyeSpacingMod += (sr(8) * 0.12 - 0.06) * weight;
+    dna.pupilSquash += (sr(9) * 0.3 - 0.15) * weight;
+
+    // First 3 traits produce identity markings (larger, closer to center)
+    if (i < 3) {
+      dna.markings.push({
+        angle: sr(11) * Math.PI * 2,
+        dist: 0.3 + sr(12) * 0.3,
+        size: 1.2 + sr(13) * 1.0,
+        type: Math.floor(sr(14) * 4),
+        hue: sr(15) * 360,
+        identity: true,
+      });
+    }
 
     // Each trait adds 1-2 unique body markings at deterministic positions
     const markCount = sr(10) > 0.6 ? 2 : 1;
@@ -137,21 +158,22 @@ function computeTraitDNA(traits) {
         size: 0.6 + sr(13 + m * 5) * 1.2,
         type: Math.floor(sr(14 + m * 5) * 4), // 0=dot, 1=dash, 2=arc, 3=ring
         hue: sr(15 + m * 5) * 360,
+        identity: false,
       });
     }
 
     // Each trait adds a unique body surface bump/indent
     dna.bodyBumps.push({
       angle: sr(21) * Math.PI * 2,
-      magnitude: sr(22) * 0.12 - 0.04, // mostly outward bumps
+      magnitude: sr(22) * 0.12 - 0.04,
     });
   }
 
-  // Clamp accumulated values to sane ranges
-  dna.hueShift = Math.max(-60, Math.min(60, dna.hueShift));
+  // Clamp accumulated values to wider ranges (diminishing returns prevents saturation)
+  dna.hueShift = Math.max(-90, Math.min(90, dna.hueShift));
   dna.bodySkewX = Math.max(-0.15, Math.min(0.15, dna.bodySkewX));
   dna.bodySkewY = Math.max(-0.12, Math.min(0.12, dna.bodySkewY));
-  dna.trunkBend = Math.max(-6, Math.min(6, dna.trunkBend));
+  dna.trunkBend = Math.max(-8, Math.min(8, dna.trunkBend));
   dna.sproutCurl = Math.max(-0.8, Math.min(0.8, dna.sproutCurl));
   dna.sproutForks = Math.min(3, dna.sproutForks);
   dna.eyeSizeMod = Math.max(-0.15, Math.min(0.2, dna.eyeSizeMod));
@@ -159,6 +181,25 @@ function computeTraitDNA(traits) {
   dna.pupilSquash = Math.max(-0.5, Math.min(0.5, dna.pupilSquash));
 
   return dna;
+}
+
+// ── Run Archetype — per-run visual identity from seed ────────────
+
+function computeRunArchetype(visualSeed) {
+  if (!visualSeed) return null;
+  const sr = (n) => seededRandom(visualSeed, n);
+  return {
+    bodyArchetype: ['round', 'angular', 'elongated', 'squat', 'asymmetric'][Math.floor(sr(0) * 5)],
+    baseHueOffset: sr(1) * 60 - 30,
+    saturationBias: 0.8 + sr(2) * 0.4,
+    eyeVariantSet: Math.floor(sr(3) * 4),
+    leafVariant: Math.floor(sr(4) * 3),
+    patternStyle: Math.floor(sr(5) * 5),
+    baseWidthBias: sr(6) * 0.06 - 0.03,
+    baseElongation: sr(7) * 0.06 - 0.03,
+    markingPreference: Math.floor(sr(8) * 4),
+    irisColorIndex: Math.floor(sr(10) * 6),
+  };
 }
 
 // ── Main Entry ───────────────────────────────────────────────────
@@ -297,9 +338,10 @@ function drawCuteSeedling(g, cx, cy, baseColor, scale) {
 
 // ── Evolved Seedling (64x64) — the star of the run ──────────────
 
-export function generateSeedlingTexture(scene, traits, textureKey = 'seedling_custom') {
+export function generateSeedlingTexture(scene, traits, textureKey = 'seedling_custom', visualSeed = 0) {
   const totalVis = countVisuals(traits);
-  const mut = computeMutationState(totalVis, traits);
+  const elements = collectTraitElements(traits);
+  const mut = computeMutationState(totalVis, traits, visualSeed);
   const totalElements = totalVis.roots + totalVis.thorns + totalVis.spores + totalVis.blooms + totalVis.vines;
 
   // Dynamic size based on body scale and element count
@@ -312,27 +354,31 @@ export function generateSeedlingTexture(scene, traits, textureKey = 'seedling_cu
   const cy = size / 2 + 2;
 
   const tintColor = computeBlendedColor(traits);
-  const bodyColor = tintColor ? blendColors(0x44BB44, tintColor, 0.5) : 0x44BB44;
+  const blendRatio = 0.35 + Math.min(0.3, traits.length * 0.03);
+  let bodyColor = tintColor ? blendColors(0x44BB44, tintColor, blendRatio) : 0x44BB44;
+  if (mut.archetype) {
+    bodyColor = shiftHue(bodyColor, mut.archetype.baseHueOffset);
+  }
 
   // Layer 1: Roots (below everything)
-  drawRoots(g, cx, cy, totalVis.roots, mut);
+  drawRoots(g, cx, cy, elements.roots, mut);
 
   // Layer 2: Vines (behind body)
-  drawVines(g, cx, cy, totalVis.vines, mut);
+  drawVines(g, cx, cy, elements.vines, mut);
 
   // Layer 3: Mutated body (includes shadow, body shape, textures, eyes, leaves)
   drawMutatedSeedling(g, cx, cy, bodyColor, 1.15, mut);
 
   // Layer 4: Thorns (on body, reduced if body has ridges)
-  const thornCount = mut.hasBodyRidges ? Math.max(0, totalVis.thorns - 2) : totalVis.thorns;
-  drawThorns(g, cx, cy, thornCount, mut);
+  const thornElems = mut.hasBodyRidges ? elements.thorns.slice(0, Math.max(0, elements.thorns.length - 2)) : elements.thorns;
+  drawThorns(g, cx, cy, thornElems, mut);
 
   // Layer 5: Blooms (reduced if integrated into body)
-  const bloomCount = mut.hasIntegratedFlowers ? Math.max(0, totalVis.blooms - 2) : totalVis.blooms;
-  drawBlooms(g, cx, cy, bloomCount, mut);
+  const bloomElems = mut.hasIntegratedFlowers ? elements.blooms.slice(0, Math.max(0, elements.blooms.length - 2)) : elements.blooms;
+  drawBlooms(g, cx, cy, bloomElems, mut);
 
   // Layer 6: Spores (softer when mist is active)
-  drawSpores(g, cx, cy, totalVis.spores, mut);
+  drawSpores(g, cx, cy, elements.spores, mut);
 
   // Layer 7: Overlay shimmer particles
   if (mut.hasShimmer) {
@@ -357,16 +403,21 @@ export function generateSeedlingTexture(scene, traits, textureKey = 'seedling_cu
 
 // ── Victory Seedling (128x128) — showcase masterpiece ────────────
 
-export function generateVictorySeedlingTexture(scene, traits, textureKey = 'seedling_victory') {
+export function generateVictorySeedlingTexture(scene, traits, textureKey = 'seedling_victory', visualSeed = 0) {
   const size = 128;
   const g = scene.make.graphics({ add: false });
   const cx = size / 2;
   const cy = size / 2 + 4;
 
   const totalVis = countVisuals(traits);
-  const mut = computeMutationState(totalVis, traits);
+  const elements = collectTraitElements(traits);
+  const mut = computeMutationState(totalVis, traits, visualSeed);
   const tintColor = computeBlendedColor(traits);
-  const bodyColor = tintColor ? blendColors(0x44BB44, tintColor, 0.5) : 0x44BB44;
+  const blendRatio = 0.35 + Math.min(0.3, traits.length * 0.03);
+  let bodyColor = tintColor ? blendColors(0x44BB44, tintColor, blendRatio) : 0x44BB44;
+  if (mut.archetype) {
+    bodyColor = shiftHue(bodyColor, mut.archetype.baseHueOffset);
+  }
 
   // Dominant trait color for glow
   let dominant = bodyColor;
@@ -385,24 +436,24 @@ export function generateVictorySeedlingTexture(scene, traits, textureKey = 'seed
   g.fillCircle(cx, cy, 38);
 
   // Layer 1: Roots at 2x
-  drawRootsLarge(g, cx, cy, totalVis.roots);
+  drawRoots(g, cx, cy, elements.roots, mut, 2);
 
   // Layer 2: Vines at 2x (behind body)
-  drawVinesLarge(g, cx, cy, totalVis.vines, mut);
+  drawVines(g, cx, cy, elements.vines, mut, 2);
 
   // Layer 3: Mutated body at 2x scale (shadow, body shape, textures, eyes, leaves)
   drawMutatedSeedling(g, cx, cy, bodyColor, 2.0, mut);
 
   // Layer 4: Thorns at 2x
-  const thornCount = mut.hasBodyRidges ? Math.max(0, totalVis.thorns - 2) : totalVis.thorns;
-  drawThornsLarge(g, cx, cy, thornCount, mut);
+  const thornElems = mut.hasBodyRidges ? elements.thorns.slice(0, Math.max(0, elements.thorns.length - 2)) : elements.thorns;
+  drawThorns(g, cx, cy, thornElems, mut, 2);
 
   // Layer 5: Blooms at 2x
-  const bloomCount = mut.hasIntegratedFlowers ? Math.max(0, totalVis.blooms - 2) : totalVis.blooms;
-  drawBloomsLarge(g, cx, cy, bloomCount, mut);
+  const bloomElems = mut.hasIntegratedFlowers ? elements.blooms.slice(0, Math.max(0, elements.blooms.length - 2)) : elements.blooms;
+  drawBlooms(g, cx, cy, bloomElems, mut, 2);
 
   // Layer 6: Spores at 2x
-  drawSporesLarge(g, cx, cy, totalVis.spores, mut);
+  drawSpores(g, cx, cy, elements.spores, mut, 2);
 
   // Sparkle dots
   const sparkles = [[cx - 30, cy - 35], [cx + 28, cy - 30], [cx - 25, cy + 20],
@@ -1251,22 +1302,54 @@ function countVisuals(traits) {
   return vis;
 }
 
+function collectTraitElements(traits) {
+  const elements = { roots: [], thorns: [], spores: [], blooms: [], vines: [] };
+  for (const t of traits) {
+    const h = hashString(t.id);
+    for (const cat of ['roots', 'thorns', 'spores', 'blooms', 'vines']) {
+      const count = t.visual[cat] || 0;
+      for (let i = 0; i < count; i++) {
+        elements[cat].push({
+          traitId: t.id,
+          variant: ((h >>> 0) + i) % 6,
+          color: t.visual.color || null,
+        });
+      }
+    }
+  }
+  return elements;
+}
+
 // ── Mutation State Computation ───────────────────────────────────
 
-function computeMutationState(vis, traits = []) {
+function computeMutationState(vis, traits = [], visualSeed = 0) {
   const m = CATEGORY_MUTATIONS;
+  const archetype = computeRunArchetype(visualSeed);
 
   // Body shape
-  const bodyScale = 1.0
+  let bodyScale = 1.0
     + vis.roots * (m.root.bodyScalePerCount || 0)
     + vis.vines * (m.vine.bodyScalePerCount || 0)
     + vis.thorns * (m.thorn.bodyScalePerCount || 0);
-  const bodyWidthBias = vis.roots * (m.root.bodyWidthBiasPerCount || 0);
-  const bodyElongation = vis.vines * (m.vine.bodyElongationPerCount || 0);
-  const bodyAngularity = vis.thorns * (m.thorn.bodyAngularityPerCount || 0);
-  const bodyRoundness = vis.blooms * (m.bloom.bodyRoundnessPerCount || 0);
+  let bodyWidthBias = vis.roots * (m.root.bodyWidthBiasPerCount || 0);
+  let bodyElongation = vis.vines * (m.vine.bodyElongationPerCount || 0);
+  let bodyAngularity = vis.thorns * (m.thorn.bodyAngularityPerCount || 0);
+  let bodyRoundness = vis.blooms * (m.bloom.bodyRoundnessPerCount || 0);
   const bodyAlpha = Math.max(0.55, 1.0 + vis.spores * (m.spore.bodyAlphaPerCount || 0));
   const bodyBrightnessShift = vis.blooms * (m.bloom.bodyBrightnessPerCount || 0);
+
+  // Apply archetype body shape offsets
+  if (archetype) {
+    bodyWidthBias += archetype.baseWidthBias;
+    bodyElongation += archetype.baseElongation;
+    switch (archetype.bodyArchetype) {
+      case 'round':     bodyRoundness += 0.04; break;
+      case 'angular':   bodyAngularity += 0.05; break;
+      case 'elongated': bodyElongation += 0.04; break;
+      case 'squat':     bodyWidthBias += 0.03; bodyElongation -= 0.02; break;
+      case 'asymmetric': break; // handled in DNA bodySkew
+    }
+  }
 
   // Eye style — highest threshold from dominant category wins
   const eyeStyle = resolveEyeStyle(vis);
@@ -1277,7 +1360,7 @@ function computeMutationState(vis, traits = []) {
   const totalElements = vis.roots + vis.thorns + vis.spores + vis.blooms + vis.vines;
 
   // Trait DNA — unique visual fingerprint from specific trait combination
-  const dna = computeTraitDNA(traits);
+  const dna = computeTraitDNA(traits, visualSeed);
 
   return {
     bodyScale,
@@ -1291,6 +1374,7 @@ function computeMutationState(vis, traits = []) {
     leafStyle,
     totalElements,
     dna,
+    archetype,
 
     // Texture flags
     hasBarkTexture: vis.roots >= (m.root.barkTextureThreshold || 99),
@@ -1298,6 +1382,11 @@ function computeMutationState(vis, traits = []) {
     hasWindingPatterns: vis.vines >= (m.vine.windingPatternsThreshold || 99),
     hasParticleDots: vis.spores >= (m.spore.particleDotsThreshold || 99),
     hasIntegratedFlowers: vis.blooms >= (m.bloom.integratedFlowersThreshold || 99),
+
+    // Style variants (archetype-driven)
+    barkStyle: archetype ? archetype.patternStyle % 3 : 0,
+    ridgeStyle: archetype ? (archetype.patternStyle + 1) % 3 : 0,
+    vinePatternStyle: archetype ? (archetype.patternStyle + 2) % 3 : 0,
 
     // Aura flags
     hasRedGlow: vis.thorns >= (m.thorn.redGlowThreshold || 99),
@@ -1470,8 +1559,14 @@ function drawMutatedSeedling(g, cx, cy, baseColor, scale, mut) {
     g.lineStyle(1, darkenColor(bodyColor, 30), 0.3);
     const midTrunkY = (trunkBaseY + trunkTopY) / 2;
     const midW = (trunkBaseW + trunkTopW) / 2;
-    g.lineBetween(cx - midW * 0.6, midTrunkY, cx + midW * 0.4, midTrunkY);
-    g.lineBetween(cx - midW * 0.4, midTrunkY + 3 * s, cx + midW * 0.3, midTrunkY + 3 * s);
+    if (mut.barkStyle === 2) {
+      // Vertical grain on trunk
+      g.lineBetween(cx - midW * 0.3, trunkTopY + 2 * s, cx - midW * 0.2, trunkBaseY - 2 * s);
+      g.lineBetween(cx + midW * 0.2, trunkTopY + 2 * s, cx + midW * 0.3, trunkBaseY - 2 * s);
+    } else {
+      g.lineBetween(cx - midW * 0.6, midTrunkY, cx + midW * 0.4, midTrunkY);
+      g.lineBetween(cx - midW * 0.4, midTrunkY + 3 * s, cx + midW * 0.3, midTrunkY + 3 * s);
+    }
   }
 
   // ── Body — ellipse shape ──
@@ -1514,33 +1609,104 @@ function drawMutatedSeedling(g, cx, cy, baseColor, scale, mut) {
     }
   }
 
-  // ── Body texture: bark plates (roots) ──
+  // ── Body texture: bark plates (roots) — style variants ──
   if (mut.hasBarkTexture) {
-    g.lineStyle(1, darkenColor(bodyColor, 30), 0.35);
+    const barkDark = darkenColor(bodyColor, 30);
     const lines = Math.min(4, mut.roots - 1);
-    for (let i = 0; i < lines; i++) {
-      const ly = cy - bhRound * 0.6 + (i / lines) * bhRound * 1.2;
-      const halfW = Math.sqrt(Math.max(0, 1 - Math.pow((ly - cy) / bhRound, 2))) * bwRound * 0.7;
-      g.lineBetween(cx - halfW, ly, cx + halfW, ly);
+    if (mut.barkStyle === 1) {
+      // Mosaic plates — irregular polygonal patches
+      g.lineStyle(1, barkDark, 0.3);
+      for (let i = 0; i < lines + 1; i++) {
+        const px = cx + (i - lines / 2) * bwRound * 0.4;
+        const py = cy + (i % 2 === 0 ? -1 : 1) * bhRound * 0.25;
+        const plateR = bwRound * (0.2 + (i % 3) * 0.08);
+        // Draw hexagonal plate outline
+        for (let j = 0; j < 6; j++) {
+          const a1 = (j / 6) * Math.PI * 2;
+          const a2 = ((j + 1) / 6) * Math.PI * 2;
+          g.lineBetween(px + Math.cos(a1) * plateR, py + Math.sin(a1) * plateR,
+            px + Math.cos(a2) * plateR, py + Math.sin(a2) * plateR);
+        }
+      }
+    } else if (mut.barkStyle === 2) {
+      // Vertical grain — long vertical lines with slight wobble
+      g.lineStyle(1, barkDark, 0.3);
+      for (let i = 0; i < lines + 1; i++) {
+        const lx = cx - bwRound * 0.5 + (i / (lines + 1)) * bwRound;
+        const topY = cy - bhRound * 0.6;
+        const botY = cy + bhRound * 0.5;
+        const wobble = (i % 2 === 0 ? 1 : -1) * s;
+        g.lineBetween(lx, topY, lx + wobble, (topY + botY) / 2);
+        g.lineBetween(lx + wobble, (topY + botY) / 2, lx, botY);
+      }
+      // Knot detail
+      g.lineStyle(1, darkenColor(bodyColor, 25), 0.2);
+      g.strokeCircle(cx + bwRound * 0.15, cy - bhRound * 0.1, 2 * s);
+    } else {
+      // Style 0: horizontal cracks (original)
+      g.lineStyle(1, barkDark, 0.35);
+      for (let i = 0; i < lines; i++) {
+        const ly = cy - bhRound * 0.6 + (i / lines) * bhRound * 1.2;
+        const halfW = Math.sqrt(Math.max(0, 1 - Math.pow((ly - cy) / bhRound, 2))) * bwRound * 0.7;
+        g.lineBetween(cx - halfW, ly, cx + halfW, ly);
+      }
+      // Vertical bark crack
+      g.lineStyle(1, darkenColor(bodyColor, 25), 0.2);
+      g.lineBetween(cx - 2 * s, cy - bhRound * 0.4, cx - 1 * s, cy + bhRound * 0.3);
     }
-    // Vertical bark crack
-    g.lineStyle(1, darkenColor(bodyColor, 25), 0.2);
-    g.lineBetween(cx - 2 * s, cy - bhRound * 0.4, cx - 1 * s, cy + bhRound * 0.3);
   }
 
-  // ── Body texture: winding vine patterns ──
+  // ── Body texture: winding vine patterns — style variants ──
   if (mut.hasWindingPatterns) {
-    g.lineStyle(1, darkenColor(bodyColor, 15), 0.3);
-    for (let i = 0; i < 2; i++) {
-      const startAngle = i * Math.PI;
-      let vx = cx + Math.cos(startAngle) * bwRound * 0.3;
-      let vy = cy + Math.sin(startAngle) * bhRound * 0.3;
-      for (let seg = 0; seg < 3; seg++) {
-        const nx = vx + Math.cos(startAngle + seg * 0.8) * 3 * s;
-        const ny = vy + Math.sin(startAngle + seg * 0.8 + 0.5) * 3 * s;
-        g.lineBetween(vx, vy, nx, ny);
-        vx = nx;
-        vy = ny;
+    const vineDark = darkenColor(bodyColor, 15);
+    if (mut.vinePatternStyle === 1) {
+      // Spiral — concentric spiral lines from center outward
+      g.lineStyle(1, vineDark, 0.25);
+      for (let i = 0; i < 2; i++) {
+        const dir = i === 0 ? 1 : -1;
+        let angle = i * Math.PI;
+        let radius = bwRound * 0.1;
+        let px = cx + Math.cos(angle) * radius;
+        let py = cy + Math.sin(angle) * radius * (bhRound / bwRound);
+        for (let seg = 0; seg < 8; seg++) {
+          angle += dir * 0.5;
+          radius += bwRound * 0.05;
+          const nx = cx + Math.cos(angle) * radius;
+          const ny = cy + Math.sin(angle) * radius * (bhRound / bwRound);
+          g.lineBetween(px, py, nx, ny);
+          px = nx;
+          py = ny;
+        }
+      }
+    } else if (mut.vinePatternStyle === 2) {
+      // Branching Y-shapes — vine splits into two at each step
+      g.lineStyle(1, vineDark, 0.3);
+      for (let i = 0; i < 2; i++) {
+        const startAngle = i * Math.PI + Math.PI * 0.25;
+        const sx = cx + Math.cos(startAngle) * bwRound * 0.15;
+        const sy = cy + Math.sin(startAngle) * bhRound * 0.15;
+        const endX = sx + Math.cos(startAngle) * 4 * s;
+        const endY = sy + Math.sin(startAngle) * 4 * s;
+        g.lineBetween(sx, sy, endX, endY);
+        // Y split
+        const branchLen = 3 * s;
+        g.lineBetween(endX, endY, endX + Math.cos(startAngle - 0.5) * branchLen, endY + Math.sin(startAngle - 0.5) * branchLen);
+        g.lineBetween(endX, endY, endX + Math.cos(startAngle + 0.5) * branchLen, endY + Math.sin(startAngle + 0.5) * branchLen);
+      }
+    } else {
+      // Style 0: sinusoidal (original)
+      g.lineStyle(1, vineDark, 0.3);
+      for (let i = 0; i < 2; i++) {
+        const startAngle = i * Math.PI;
+        let vx = cx + Math.cos(startAngle) * bwRound * 0.3;
+        let vy = cy + Math.sin(startAngle) * bhRound * 0.3;
+        for (let seg = 0; seg < 3; seg++) {
+          const nx = vx + Math.cos(startAngle + seg * 0.8) * 3 * s;
+          const ny = vy + Math.sin(startAngle + seg * 0.8 + 0.5) * 3 * s;
+          g.lineBetween(vx, vy, nx, ny);
+          vx = nx;
+          vy = ny;
+        }
       }
     }
   }
@@ -1579,20 +1745,50 @@ function drawMutatedSeedling(g, cx, cy, baseColor, scale, mut) {
     }
   }
 
-  // ── Body texture: body ridges (thorns) ──
+  // ── Body texture: body ridges (thorns) — style variants ──
   if (mut.hasBodyRidges) {
     const ridgeColor = blendColors(bodyColor, CATEGORY_COLORS.thorn, 0.3);
-    g.fillStyle(ridgeColor, 0.7);
     const count = Math.min(4, mut.thorns);
-    for (let i = 0; i < count; i++) {
-      const angle = -Math.PI * 0.7 + (i / count) * Math.PI * 0.4;
-      const bx = cx + Math.cos(angle) * (bwRound - 1);
-      const by = cy + Math.sin(angle) * (bhRound - 1);
-      g.fillTriangle(
-        bx + Math.cos(angle) * 4 * s, by + Math.sin(angle) * 4 * s,
-        bx + Math.cos(angle + 0.5) * 1.5 * s, by + Math.sin(angle + 0.5) * 1.5 * s,
-        bx + Math.cos(angle - 0.5) * 1.5 * s, by + Math.sin(angle - 0.5) * 1.5 * s,
-      );
+    if (mut.ridgeStyle === 1) {
+      // Rounded bumps — soft dome shapes instead of spikes
+      for (let i = 0; i < count; i++) {
+        const angle = -Math.PI * 0.7 + (i / count) * Math.PI * 0.4;
+        const bx = cx + Math.cos(angle) * (bwRound - 1);
+        const by = cy + Math.sin(angle) * (bhRound - 1);
+        const bumpR = (2 + mut.bodyAngularity * 2) * s;
+        g.fillStyle(ridgeColor, 0.5);
+        g.fillCircle(bx + Math.cos(angle) * bumpR * 0.5, by + Math.sin(angle) * bumpR * 0.5, bumpR);
+        g.fillStyle(brightenColor(ridgeColor, 15), 0.3);
+        g.fillCircle(bx + Math.cos(angle) * bumpR * 0.3, by + Math.sin(angle) * bumpR * 0.3 - s, bumpR * 0.5);
+      }
+    } else if (mut.ridgeStyle === 2) {
+      // Saw teeth — asymmetric jagged shapes
+      g.fillStyle(ridgeColor, 0.7);
+      for (let i = 0; i < count; i++) {
+        const angle = -Math.PI * 0.7 + (i / count) * Math.PI * 0.4;
+        const bx = cx + Math.cos(angle) * (bwRound - 1);
+        const by = cy + Math.sin(angle) * (bhRound - 1);
+        const tipLen = 4 * s * (1 + mut.bodyAngularity * 0.5);
+        g.fillTriangle(
+          bx + Math.cos(angle) * tipLen, by + Math.sin(angle) * tipLen,
+          bx + Math.cos(angle + 0.3) * 1 * s, by + Math.sin(angle + 0.3) * 1 * s,
+          bx + Math.cos(angle - 0.7) * 2.5 * s, by + Math.sin(angle - 0.7) * 2.5 * s,
+        );
+      }
+    } else {
+      // Style 0: sharp spikes (original)
+      g.fillStyle(ridgeColor, 0.7);
+      for (let i = 0; i < count; i++) {
+        const angle = -Math.PI * 0.7 + (i / count) * Math.PI * 0.4;
+        const bx = cx + Math.cos(angle) * (bwRound - 1);
+        const by = cy + Math.sin(angle) * (bhRound - 1);
+        const tipLen = 3 * s * (1 + mut.bodyAngularity * 0.5);
+        g.fillTriangle(
+          bx + Math.cos(angle) * tipLen, by + Math.sin(angle) * tipLen,
+          bx + Math.cos(angle + 0.5) * 1.5 * s, by + Math.sin(angle + 0.5) * 1.5 * s,
+          bx + Math.cos(angle - 0.5) * 1.5 * s, by + Math.sin(angle - 0.5) * 1.5 * s,
+        );
+      }
     }
   }
 
@@ -1618,26 +1814,29 @@ function drawMutatedSeedling(g, cx, cy, baseColor, scale, mut) {
       const mx = cx + Math.cos(mark.angle) * bwRound * mark.dist;
       const my = cy + Math.sin(mark.angle) * bhRound * mark.dist;
       const markColor = shiftHue(darkenColor(bodyColor, 15), mark.hue);
-      const markSize = mark.size * s;
+      // Identity markings (first 3 traits) render larger and more opaque
+      const idScale = mark.identity ? 1.3 : 1.0;
+      const idAlpha = mark.identity ? 0.2 : 0.0;
+      const markSize = mark.size * s * idScale;
       if (mark.type === 0) {
         // Dot
-        g.fillStyle(markColor, 0.35);
+        g.fillStyle(markColor, 0.35 + idAlpha);
         g.fillCircle(mx, my, markSize);
       } else if (mark.type === 1) {
         // Dash
-        g.lineStyle(Math.max(1, markSize * 0.6), markColor, 0.3);
+        g.lineStyle(Math.max(1, markSize * 0.6), markColor, 0.3 + idAlpha);
         const da = mark.angle + Math.PI / 2;
         g.lineBetween(mx - Math.cos(da) * markSize, my - Math.sin(da) * markSize,
           mx + Math.cos(da) * markSize, my + Math.sin(da) * markSize);
       } else if (mark.type === 2) {
         // Arc
-        g.lineStyle(1, markColor, 0.3);
+        g.lineStyle(mark.identity ? 2 : 1, markColor, 0.3 + idAlpha);
         g.beginPath();
         g.arc(mx, my, markSize * 1.2, mark.angle, mark.angle + 1.2);
         g.strokePath();
       } else {
         // Ring
-        g.lineStyle(1, markColor, 0.25);
+        g.lineStyle(mark.identity ? 2 : 1, markColor, 0.25 + idAlpha);
         g.strokeCircle(mx, my, markSize * 0.8);
       }
     }
@@ -1778,6 +1977,54 @@ function drawMutatedEyes(g, cx, cy, s, style, mut) {
       pupilW = Math.round(1.5 * s);
       pupilH = Math.round(5 * s);
       break;
+    case 'stoic':
+      // Square pupils, thick brows, earthy iris
+      eyeH = Math.round(7 * s);
+      eyeW = Math.round(7 * s);
+      irisColor = 0x5A4A2A;
+      pupilW = Math.round(3 * s);
+      pupilH = Math.round(3 * s);
+      hasBrows = true;
+      break;
+    case 'menacing':
+      // Down-angled brows, red-tinted sclera
+      eyeH = Math.round(6 * s);
+      irisH = Math.round(4.5 * s);
+      irisColor = 0x7A2222;
+      pupilW = Math.round(2 * s);
+      pupilH = Math.round(4 * s);
+      hasBrows = true;
+      break;
+    case 'gentle':
+      // Upturned, oversized iris, pastel
+      eyeW = Math.round(8 * s);
+      eyeH = Math.round(9 * s);
+      irisW = Math.round(6.5 * s);
+      irisH = Math.round(7 * s);
+      irisColor = 0x88BBAA;
+      hasSparkles = true;
+      break;
+    case 'dreamy':
+      // Half-lidded, wide pupils, purple glow
+      eyeW = Math.round(8 * s);
+      eyeH = Math.round(6 * s);
+      irisW = Math.round(6 * s);
+      irisH = Math.round(5 * s);
+      pupilW = Math.round(4 * s);
+      pupilH = Math.round(4 * s);
+      irisColor = 0x7744AA;
+      hasGlow = true;
+      break;
+    case 'focused':
+      // Narrow horizontal, bright green iris
+      eyeW = Math.round(9 * s);
+      eyeH = Math.round(6 * s);
+      irisW = Math.round(7 * s);
+      irisH = Math.round(4.5 * s);
+      irisColor = 0x22CC55;
+      pupilW = Math.round(2 * s);
+      pupilH = Math.round(3 * s);
+      break;
   }
 
   // Glow behind eyes
@@ -1789,19 +2036,60 @@ function drawMutatedEyes(g, cx, cy, s, style, mut) {
 
   // Eyebrows
   if (hasBrows) {
-    g.lineStyle(Math.round(1.5 * s), darkenColor(0x1A7A5E, 30));
-    g.lineBetween(
-      cx - eyeSpacing - Math.round(3 * s), cy - Math.round(5.5 * s),
-      cx - eyeSpacing + Math.round(2 * s), cy - Math.round(6 * s),
-    );
-    g.lineBetween(
-      cx + eyeSpacing - Math.round(2 * s), cy - Math.round(6 * s),
-      cx + eyeSpacing + Math.round(3 * s), cy - Math.round(5.5 * s),
-    );
+    const browColor = darkenColor(irisColor, 30);
+    g.lineStyle(Math.round(1.5 * s), browColor);
+    if (style === 'menacing') {
+      // Down-angled brows — angry look
+      g.lineBetween(
+        cx - eyeSpacing - Math.round(3 * s), cy - Math.round(7 * s),
+        cx - eyeSpacing + Math.round(2 * s), cy - Math.round(5 * s),
+      );
+      g.lineBetween(
+        cx + eyeSpacing - Math.round(2 * s), cy - Math.round(5 * s),
+        cx + eyeSpacing + Math.round(3 * s), cy - Math.round(7 * s),
+      );
+    } else if (style === 'stoic') {
+      // Thick, flat brows
+      g.lineStyle(Math.round(2 * s), browColor);
+      g.lineBetween(
+        cx - eyeSpacing - Math.round(3 * s), cy - Math.round(5.5 * s),
+        cx - eyeSpacing + Math.round(3 * s), cy - Math.round(5.5 * s),
+      );
+      g.lineBetween(
+        cx + eyeSpacing - Math.round(3 * s), cy - Math.round(5.5 * s),
+        cx + eyeSpacing + Math.round(3 * s), cy - Math.round(5.5 * s),
+      );
+    } else {
+      // Default brows
+      g.lineBetween(
+        cx - eyeSpacing - Math.round(3 * s), cy - Math.round(5.5 * s),
+        cx - eyeSpacing + Math.round(2 * s), cy - Math.round(6 * s),
+      );
+      g.lineBetween(
+        cx + eyeSpacing - Math.round(2 * s), cy - Math.round(6 * s),
+        cx + eyeSpacing + Math.round(3 * s), cy - Math.round(5.5 * s),
+      );
+    }
   }
 
-  // Outer eye white
-  g.fillStyle(0xEEFFEE);
+  // Archetype eye micro-variations
+  const arch = mut.archetype;
+  if (arch) {
+    // Iris color variant from archetype
+    const irisVariants = [0x1A7A5E, 0x2A6A7E, 0x5A6A2E, 0x4A3A7E, 0x7A5A2E, 0x2A7A7A];
+    if (arch.irisColorIndex > 0 && style === 'default') {
+      irisColor = irisVariants[arch.irisColorIndex % irisVariants.length];
+    }
+    // Subtle size/shape tweaks per eyeVariantSet
+    const ev = arch.eyeVariantSet;
+    if (ev === 1) { eyeW += Math.round(0.5 * s); } // slightly wider
+    else if (ev === 2) { eyeH += Math.round(0.5 * s); } // slightly taller
+    else if (ev === 3) { irisW += Math.round(0.5 * s); irisH += Math.round(0.5 * s); } // bigger iris
+  }
+
+  // Outer eye white (red-tinted sclera for menacing)
+  const scleraColor = style === 'menacing' ? 0xFFDDDD : 0xEEFFEE;
+  g.fillStyle(scleraColor);
   g.fillEllipse(cx - eyeSpacing, cy - Math.round(1 * s), eyeW, eyeH);
   g.fillEllipse(cx + eyeSpacing, cy - Math.round(1 * s), eyeW, eyeH);
 
@@ -1854,6 +2142,12 @@ function drawMutatedLeaves(g, cx, cy, s, leafStyle, bodyColor, mut) {
       break;
     case 'tendril':
       drawTendrilLeaves(g, cx, cy, s, bodyColor);
+      break;
+    case 'thick':
+      drawThickLeaves(g, cx, cy, s, bodyColor);
+      break;
+    case 'wispy':
+      drawWispyLeaves(g, cx, cy, s, bodyColor);
       break;
     default:
       drawDefaultLeaves(g, cx, cy, s, bodyColor);
@@ -1974,381 +2268,729 @@ function drawTendrilLeaves(g, cx, cy, s, bodyColor) {
   g.fillCircle(rx, ry, Math.round(1.5 * s));
 }
 
-// ── Trait Drawing Helpers (normal scale, 64x64) ──────────────────
+function drawThickLeaves(g, cx, cy, s, bodyColor) {
+  const leafColor = blendColors(brightenColor(bodyColor, 25), CATEGORY_COLORS.root, 0.15);
+  const leafDark = darkenColor(bodyColor, 10);
 
-function drawRoots(g, cx, cy, count, mut) {
-  if (count <= 0) return;
-  const n = Math.min(count, 6);
-  const rootColor = CATEGORY_COLORS.root;
-  const bodyOffset = mut ? (mut.bodyScale - 1) * 10 : 0;
+  // Left thick leaf — broad, rounded, heavy
+  g.fillStyle(leafColor);
+  g.fillEllipse(cx - Math.round(9 * s), cy - Math.round(13 * s), Math.round(14 * s), Math.round(9 * s));
+  // Rounded tip
+  g.fillCircle(cx - Math.round(15 * s), cy - Math.round(13 * s), Math.round(4 * s));
+  // Heavy central vein
+  g.lineStyle(Math.round(1.5 * s), leafDark, 0.5);
+  g.lineBetween(cx - Math.round(3 * s), cy - Math.round(12 * s), cx - Math.round(14 * s), cy - Math.round(13.5 * s));
+  // Secondary veins
+  g.lineStyle(1, leafDark, 0.3);
+  g.lineBetween(cx - Math.round(7 * s), cy - Math.round(12.5 * s), cx - Math.round(10 * s), cy - Math.round(10 * s));
+  g.lineBetween(cx - Math.round(9 * s), cy - Math.round(13 * s), cx - Math.round(12 * s), cy - Math.round(10.5 * s));
 
-  // Central taproot — now at 3+ instead of 4+
+  // Right thick leaf
+  g.fillStyle(brightenColor(leafColor, 5));
+  g.fillEllipse(cx + Math.round(9 * s), cy - Math.round(12 * s), Math.round(13 * s), Math.round(9 * s));
+  g.fillCircle(cx + Math.round(14 * s), cy - Math.round(12 * s), Math.round(4 * s));
+  g.lineStyle(Math.round(1.5 * s), leafDark, 0.5);
+  g.lineBetween(cx + Math.round(3 * s), cy - Math.round(11 * s), cx + Math.round(13 * s), cy - Math.round(12.5 * s));
+  g.lineStyle(1, leafDark, 0.3);
+  g.lineBetween(cx + Math.round(7 * s), cy - Math.round(11.5 * s), cx + Math.round(10 * s), cy - Math.round(9 * s));
+  g.lineBetween(cx + Math.round(9 * s), cy - Math.round(12 * s), cx + Math.round(12 * s), cy - Math.round(9.5 * s));
+}
+
+function drawWispyLeaves(g, cx, cy, s, bodyColor) {
+  const leafColor = blendColors(brightenColor(bodyColor, 40), CATEGORY_COLORS.spore, 0.2);
+
+  // Left wispy leaf — thin, translucent, floating
+  g.fillStyle(leafColor, 0.5);
+  g.fillEllipse(cx - Math.round(9 * s), cy - Math.round(15 * s), Math.round(10 * s), Math.round(4 * s));
+  // Wispy tip trails
+  g.lineStyle(1, leafColor, 0.35);
+  g.lineBetween(cx - Math.round(14 * s), cy - Math.round(15 * s), cx - Math.round(17 * s), cy - Math.round(17 * s));
+  g.lineBetween(cx - Math.round(13 * s), cy - Math.round(14 * s), cx - Math.round(16 * s), cy - Math.round(13 * s));
+  // Translucent highlight
+  g.fillStyle(brightenColor(leafColor, 30), 0.25);
+  g.fillEllipse(cx - Math.round(8 * s), cy - Math.round(16 * s), Math.round(6 * s), Math.round(2 * s));
+
+  // Right wispy leaf
+  g.fillStyle(brightenColor(leafColor, 5), 0.5);
+  g.fillEllipse(cx + Math.round(9 * s), cy - Math.round(14 * s), Math.round(9 * s), Math.round(4 * s));
+  g.lineStyle(1, leafColor, 0.35);
+  g.lineBetween(cx + Math.round(13 * s), cy - Math.round(14 * s), cx + Math.round(16 * s), cy - Math.round(16 * s));
+  g.lineBetween(cx + Math.round(12 * s), cy - Math.round(13 * s), cx + Math.round(15 * s), cy - Math.round(12 * s));
+  g.fillStyle(brightenColor(leafColor, 30), 0.25);
+  g.fillEllipse(cx + Math.round(8 * s), cy - Math.round(15 * s), Math.round(5 * s), Math.round(2 * s));
+}
+
+// ── Shape Variant Tables ────────────────────────────────────────
+
+// Each variant function: (g, x, y, angle, color, params, scale)
+// where params holds category-specific context
+
+const THORN_VARIANTS = [
+  // 0: triangle (original)
+  function(g, bx, by, angle, tipLen, tipW, color, highlightAmt, scale) {
+    const tipX = bx + Math.cos(angle) * tipLen;
+    const tipY = by + Math.sin(angle) * tipLen;
+    const perpX = Math.cos(angle + Math.PI / 2);
+    const perpY = Math.sin(angle + Math.PI / 2);
+    g.fillStyle(darkenColor(color, 40));
+    g.fillTriangle(tipX, tipY, bx + perpX * tipW, by + perpY * tipW, bx - perpX * tipW, by - perpY * tipW);
+    g.fillStyle(color);
+    g.fillTriangle(tipX, tipY, bx + perpX * (tipW - 1 * scale), by + perpY * (tipW - 1 * scale), bx - perpX * (tipW - 1 * scale), by - perpY * (tipW - 1 * scale));
+    g.fillStyle(brightenColor(color, highlightAmt));
+    g.fillTriangle(tipX, tipY, bx + perpX * 1 * scale, by + perpY * 1 * scale, bx, by);
+  },
+  // 1: curved spike
+  function(g, bx, by, angle, tipLen, tipW, color, highlightAmt, scale) {
+    const curveOff = 3 * scale;
+    const midX = bx + Math.cos(angle) * tipLen * 0.5 + Math.cos(angle + 0.8) * curveOff;
+    const midY = by + Math.sin(angle) * tipLen * 0.5 + Math.sin(angle + 0.8) * curveOff;
+    const tipX = bx + Math.cos(angle) * tipLen;
+    const tipY = by + Math.sin(angle) * tipLen;
+    g.lineStyle(Math.max(1, 2.5 * scale), darkenColor(color, 30));
+    g.lineBetween(bx, by, midX, midY);
+    g.lineStyle(Math.max(1, 2 * scale), color);
+    g.lineBetween(midX, midY, tipX, tipY);
+    g.fillStyle(brightenColor(color, highlightAmt));
+    g.fillCircle(tipX, tipY, 1.2 * scale);
+  },
+  // 2: barb (triangle with backward hook)
+  function(g, bx, by, angle, tipLen, tipW, color, highlightAmt, scale) {
+    const tipX = bx + Math.cos(angle) * tipLen;
+    const tipY = by + Math.sin(angle) * tipLen;
+    const perpX = Math.cos(angle + Math.PI / 2);
+    const perpY = Math.sin(angle + Math.PI / 2);
+    // Main spike
+    g.fillStyle(color);
+    g.fillTriangle(tipX, tipY, bx + perpX * tipW * 0.7, by + perpY * tipW * 0.7, bx - perpX * tipW * 0.7, by - perpY * tipW * 0.7);
+    // Backward barbs
+    const barbBase = tipLen * 0.6;
+    const barbX = bx + Math.cos(angle) * barbBase;
+    const barbY = by + Math.sin(angle) * barbBase;
+    g.fillStyle(darkenColor(color, 20));
+    g.fillTriangle(barbX, barbY, barbX - Math.cos(angle) * 3 * scale + perpX * tipW, barbY - Math.sin(angle) * 3 * scale + perpY * tipW, barbX + perpX * tipW * 0.3, barbY + perpY * tipW * 0.3);
+    g.fillTriangle(barbX, barbY, barbX - Math.cos(angle) * 3 * scale - perpX * tipW, barbY - Math.sin(angle) * 3 * scale - perpY * tipW, barbX - perpX * tipW * 0.3, barbY - perpY * tipW * 0.3);
+    g.fillStyle(brightenColor(color, highlightAmt));
+    g.fillCircle(tipX, tipY, 0.8 * scale);
+  },
+  // 3: serrated blade (wide, flat with notches)
+  function(g, bx, by, angle, tipLen, tipW, color, highlightAmt, scale) {
+    const tipX = bx + Math.cos(angle) * tipLen * 0.85;
+    const tipY = by + Math.sin(angle) * tipLen * 0.85;
+    const perpX = Math.cos(angle + Math.PI / 2);
+    const perpY = Math.sin(angle + Math.PI / 2);
+    const wideW = tipW * 1.4;
+    // Wider, flatter blade
+    g.fillStyle(darkenColor(color, 30));
+    g.fillTriangle(tipX, tipY, bx + perpX * wideW, by + perpY * wideW, bx - perpX * wideW, by - perpY * wideW);
+    g.fillStyle(color);
+    g.fillTriangle(tipX, tipY, bx + perpX * (wideW - 1 * scale), by + perpY * (wideW - 1 * scale), bx - perpX * (wideW - 1 * scale), by - perpY * (wideW - 1 * scale));
+    // Serration notches along one edge
+    for (let j = 0; j < 2; j++) {
+      const t = 0.3 + j * 0.3;
+      const nx = bx + (tipX - bx) * t + perpX * wideW * (1 - t);
+      const ny = by + (tipY - by) * t + perpY * wideW * (1 - t);
+      g.fillStyle(darkenColor(color, 50));
+      g.fillCircle(nx, ny, 1 * scale);
+    }
+  },
+  // 4: claw (curved hook shape)
+  function(g, bx, by, angle, tipLen, tipW, color, highlightAmt, scale) {
+    const segments = 4;
+    const curvature = 0.2;
+    let px = bx, py = by;
+    let curAngle = angle;
+    const segLen = tipLen / segments;
+    g.lineStyle(Math.max(1, 2.5 * scale), darkenColor(color, 20));
+    for (let j = 0; j < segments; j++) {
+      curAngle += curvature;
+      const nx = px + Math.cos(curAngle) * segLen;
+      const ny = py + Math.sin(curAngle) * segLen;
+      g.lineBetween(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+    // Sharp tip
+    g.lineStyle(Math.max(1, 1.5 * scale), brightenColor(color, highlightAmt));
+    g.lineBetween(px, py, px + Math.cos(curAngle) * 2 * scale, py + Math.sin(curAngle) * 2 * scale);
+    g.fillStyle(color);
+    g.fillCircle(px, py, 1.5 * scale);
+  },
+  // 5: crystal shard (diamond shape)
+  function(g, bx, by, angle, tipLen, tipW, color, highlightAmt, scale) {
+    const tipX = bx + Math.cos(angle) * tipLen;
+    const tipY = by + Math.sin(angle) * tipLen;
+    const perpX = Math.cos(angle + Math.PI / 2);
+    const perpY = Math.sin(angle + Math.PI / 2);
+    const midX = (bx + tipX) / 2;
+    const midY = (by + tipY) / 2;
+    // Diamond: two triangles sharing the wide midpoint
+    g.fillStyle(darkenColor(color, 30));
+    g.fillTriangle(bx, by, midX + perpX * tipW * 1.2, midY + perpY * tipW * 1.2, midX - perpX * tipW * 1.2, midY - perpY * tipW * 1.2);
+    g.fillStyle(color);
+    g.fillTriangle(tipX, tipY, midX + perpX * tipW * 1.2, midY + perpY * tipW * 1.2, midX - perpX * tipW * 1.2, midY - perpY * tipW * 1.2);
+    // Bright facet highlight
+    g.fillStyle(brightenColor(color, highlightAmt + 15));
+    g.fillTriangle(tipX, tipY, midX + perpX * tipW * 0.4, midY + perpY * tipW * 0.4, midX, midY);
+  },
+];
+
+const BLOOM_VARIANTS = [
+  // 0: five-petal flower (original)
+  function(g, fx, fy, color, highlight, petalSize) {
+    for (let p = 0; p < 5; p++) {
+      const a = (p / 5) * Math.PI * 2 - Math.PI / 2;
+      const px = fx + Math.cos(a) * petalSize;
+      const py = fy + Math.sin(a) * petalSize;
+      g.fillStyle(color);
+      g.fillCircle(px, py, petalSize);
+      g.fillStyle(highlight);
+      g.fillCircle(px + Math.cos(a) * 0.5, py + Math.sin(a) * 0.5, petalSize * 0.5);
+    }
+    g.fillStyle(0xFFEE44);
+    g.fillCircle(fx, fy, petalSize * 0.6);
+    g.fillStyle(0xFFFF88);
+    g.fillCircle(fx - 0.5, fy - 0.5, petalSize * 0.3);
+  },
+  // 1: three-petal (larger petals at 120 degrees)
+  function(g, fx, fy, color, highlight, petalSize) {
+    for (let p = 0; p < 3; p++) {
+      const a = (p / 3) * Math.PI * 2 - Math.PI / 2;
+      const px = fx + Math.cos(a) * petalSize * 1.2;
+      const py = fy + Math.sin(a) * petalSize * 1.2;
+      g.fillStyle(color);
+      g.fillCircle(px, py, petalSize * 1.3);
+      g.fillStyle(highlight);
+      g.fillCircle(px + Math.cos(a) * 0.6, py + Math.sin(a) * 0.6, petalSize * 0.55);
+    }
+    g.fillStyle(0xFFEE44);
+    g.fillCircle(fx, fy, petalSize * 0.7);
+    g.fillStyle(0xFFFF88);
+    g.fillCircle(fx - 0.5, fy - 0.5, petalSize * 0.35);
+  },
+  // 2: star flower (6 narrow pointed petals)
+  function(g, fx, fy, color, highlight, petalSize) {
+    for (let p = 0; p < 6; p++) {
+      const a = (p / 6) * Math.PI * 2 - Math.PI / 2;
+      const tipX = fx + Math.cos(a) * petalSize * 1.8;
+      const tipY = fy + Math.sin(a) * petalSize * 1.8;
+      const perpA = a + Math.PI / 2;
+      const w = petalSize * 0.35;
+      g.fillStyle(color);
+      g.fillTriangle(tipX, tipY, fx + Math.cos(perpA) * w, fy + Math.sin(perpA) * w, fx - Math.cos(perpA) * w, fy - Math.sin(perpA) * w);
+      g.fillStyle(highlight);
+      g.fillTriangle(tipX, tipY, fx + Math.cos(perpA) * w * 0.3, fy + Math.sin(perpA) * w * 0.3, fx, fy);
+    }
+    g.fillStyle(0xFFEE44);
+    g.fillCircle(fx, fy, petalSize * 0.5);
+  },
+  // 3: bell flower (downward U-shape)
+  function(g, fx, fy, color, highlight, petalSize) {
+    const bellW = petalSize * 1.6;
+    const bellH = petalSize * 2.0;
+    // Bell body (overlapping circles forming a cup)
+    g.fillStyle(color);
+    g.fillCircle(fx - bellW * 0.35, fy + bellH * 0.2, petalSize * 0.9);
+    g.fillCircle(fx + bellW * 0.35, fy + bellH * 0.2, petalSize * 0.9);
+    g.fillCircle(fx, fy + bellH * 0.35, petalSize * 0.85);
+    // Highlight on top
+    g.fillStyle(highlight);
+    g.fillCircle(fx, fy - petalSize * 0.2, petalSize * 0.6);
+    // Stem dot at top
+    g.fillStyle(darkenColor(color, 30));
+    g.fillCircle(fx, fy - petalSize * 0.6, petalSize * 0.25);
+    // Stamen dot at bottom
+    g.fillStyle(0xFFEE44);
+    g.fillCircle(fx, fy + bellH * 0.45, petalSize * 0.3);
+  },
+  // 4: rosette (8 tiny overlapping circles)
+  function(g, fx, fy, color, highlight, petalSize) {
+    const ring1R = petalSize * 0.8;
+    const ring2R = petalSize * 1.4;
+    // Inner ring of 4
+    for (let p = 0; p < 4; p++) {
+      const a = (p / 4) * Math.PI * 2;
+      g.fillStyle(highlight);
+      g.fillCircle(fx + Math.cos(a) * ring1R, fy + Math.sin(a) * ring1R, petalSize * 0.55);
+    }
+    // Outer ring of 4
+    for (let p = 0; p < 4; p++) {
+      const a = (p / 4) * Math.PI * 2 + Math.PI / 4;
+      g.fillStyle(color);
+      g.fillCircle(fx + Math.cos(a) * ring2R, fy + Math.sin(a) * ring2R, petalSize * 0.65);
+    }
+    g.fillStyle(0xFFEE44);
+    g.fillCircle(fx, fy, petalSize * 0.45);
+  },
+  // 5: dandelion puff (center dot + radiating lines with tip dots)
+  function(g, fx, fy, color, highlight, petalSize) {
+    const rays = 8;
+    const rayLen = petalSize * 1.8;
+    for (let p = 0; p < rays; p++) {
+      const a = (p / rays) * Math.PI * 2;
+      const tipX = fx + Math.cos(a) * rayLen;
+      const tipY = fy + Math.sin(a) * rayLen;
+      g.lineStyle(1, color, 0.7);
+      g.lineBetween(fx, fy, tipX, tipY);
+      g.fillStyle(highlight);
+      g.fillCircle(tipX, tipY, petalSize * 0.3);
+    }
+    g.fillStyle(0xFFFFCC);
+    g.fillCircle(fx, fy, petalSize * 0.5);
+  },
+];
+
+const ROOT_VARIANTS = [
+  // 0: branching (original — straight + 2 branches)
+  function(g, startX, startY, angle, length, color, scale, hasHairs) {
+    const midX = startX + Math.cos(angle) * length;
+    const midY = startY + Math.sin(angle) * length;
+    g.lineStyle(Math.max(1, 2 * scale), color);
+    g.lineBetween(startX, startY, midX, midY);
+    g.lineStyle(Math.max(1, 1 * scale), brightenColor(color, 15));
+    g.lineBetween(midX, midY, midX + Math.cos(angle - 0.4) * length * 0.7, midY + Math.sin(angle - 0.4) * length * 0.7);
+    g.lineBetween(midX, midY, midX + Math.cos(angle + 0.4) * length * 0.7, midY + Math.sin(angle + 0.4) * length * 0.7);
+    if (hasHairs) {
+      g.lineStyle(1, brightenColor(color, 25), 0.6);
+      const tipX = midX + Math.cos(angle) * 4 * scale;
+      const tipY = midY + Math.sin(angle) * 4 * scale;
+      g.lineBetween(tipX, tipY, tipX + Math.cos(angle - 0.7) * 4 * scale, tipY + Math.sin(angle - 0.7) * 4 * scale);
+      g.lineBetween(tipX, tipY, tipX + Math.cos(angle + 0.7) * 4 * scale, tipY + Math.sin(angle + 0.7) * 4 * scale);
+    }
+  },
+  // 1: gnarled (zigzag path)
+  function(g, startX, startY, angle, length, color, scale, hasHairs) {
+    const segs = 3;
+    const segLen = length / segs;
+    let px = startX, py = startY;
+    g.lineStyle(Math.max(1, 2 * scale), color);
+    for (let j = 0; j < segs; j++) {
+      const jitter = (j % 2 === 0 ? 0.3 : -0.3);
+      const nx = px + Math.cos(angle + jitter) * segLen;
+      const ny = py + Math.sin(angle + jitter) * segLen;
+      g.lineBetween(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+    g.lineStyle(Math.max(1, 1 * scale), brightenColor(color, 20));
+    g.lineBetween(px, py, px + Math.cos(angle) * 4 * scale, py + Math.sin(angle) * 4 * scale);
+  },
+  // 2: bulbous (line ending in filled circle — tuber)
+  function(g, startX, startY, angle, length, color, scale) {
+    const endX = startX + Math.cos(angle) * length * 0.8;
+    const endY = startY + Math.sin(angle) * length * 0.8;
+    g.lineStyle(Math.max(1, 2 * scale), color);
+    g.lineBetween(startX, startY, endX, endY);
+    g.fillStyle(darkenColor(color, 15));
+    g.fillCircle(endX + Math.cos(angle) * 2 * scale, endY + Math.sin(angle) * 2 * scale, 3 * scale);
+    g.fillStyle(brightenColor(color, 20));
+    g.fillCircle(endX + Math.cos(angle) * 1.5 * scale, endY + Math.sin(angle) * 1.5 * scale, 1.5 * scale);
+  },
+  // 3: tendril (thin spiraling segments)
+  function(g, startX, startY, angle, length, color, scale) {
+    const segs = 5;
+    const segLen = length / segs * 0.9;
+    let px = startX, py = startY;
+    let curAngle = angle;
+    g.lineStyle(Math.max(1, 1.5 * scale), color);
+    for (let j = 0; j < segs; j++) {
+      curAngle += 0.25 * (j % 2 === 0 ? 1 : -1);
+      const nx = px + Math.cos(curAngle) * segLen;
+      const ny = py + Math.sin(curAngle) * segLen;
+      g.lineBetween(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+    g.fillStyle(brightenColor(color, 25));
+    g.fillCircle(px, py, 1 * scale);
+  },
+  // 4: tapering (thick-to-thin decreasing width)
+  function(g, startX, startY, angle, length, color, scale) {
+    const segs = 4;
+    const segLen = length / segs;
+    let px = startX, py = startY;
+    for (let j = 0; j < segs; j++) {
+      const w = Math.max(1, (2.5 - j * 0.5) * scale);
+      const c = j < 2 ? darkenColor(color, j * 10) : brightenColor(color, (j - 2) * 10);
+      g.lineStyle(w, c);
+      const nx = px + Math.cos(angle) * segLen;
+      const ny = py + Math.sin(angle) * segLen;
+      g.lineBetween(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+  },
+  // 5: hairy (straight root with perpendicular hair lines)
+  function(g, startX, startY, angle, length, color, scale) {
+    const endX = startX + Math.cos(angle) * length;
+    const endY = startY + Math.sin(angle) * length;
+    g.lineStyle(Math.max(1, 2 * scale), color);
+    g.lineBetween(startX, startY, endX, endY);
+    const perpA = angle + Math.PI / 2;
+    const hairLen = 3 * scale;
+    g.lineStyle(1, brightenColor(color, 20), 0.7);
+    for (let j = 0; j < 4; j++) {
+      const t = 0.2 + j * 0.2;
+      const hx = startX + (endX - startX) * t;
+      const hy = startY + (endY - startY) * t;
+      const side = j % 2 === 0 ? 1 : -1;
+      g.lineBetween(hx, hy, hx + Math.cos(perpA) * hairLen * side, hy + Math.sin(perpA) * hairLen * side);
+    }
+  },
+];
+
+const SPORE_VARIANTS = [
+  // 0: asterisk (original — cross lines + dot)
+  function(g, sx, sy, color, alpha, size, scale) {
+    g.fillStyle(color, alpha);
+    g.fillCircle(sx, sy, size);
+    g.lineStyle(1, brightenColor(color, 30), alpha);
+    const r = 3 * scale;
+    g.lineBetween(sx - r, sy, sx + r, sy);
+    g.lineBetween(sx, sy - r, sx, sy + r);
+    g.lineBetween(sx - r * 0.7, sy - r * 0.7, sx + r * 0.7, sy + r * 0.7);
+  },
+  // 1: ring (hollow circle outline)
+  function(g, sx, sy, color, alpha, size, scale) {
+    g.lineStyle(Math.max(1, 1.5 * scale), color, alpha);
+    const r = 3 * scale;
+    // Draw circle as line segments
+    const segs = 8;
+    for (let j = 0; j < segs; j++) {
+      const a1 = (j / segs) * Math.PI * 2;
+      const a2 = ((j + 1) / segs) * Math.PI * 2;
+      g.lineBetween(sx + Math.cos(a1) * r, sy + Math.sin(a1) * r, sx + Math.cos(a2) * r, sy + Math.sin(a2) * r);
+    }
+    g.fillStyle(brightenColor(color, 30), alpha * 0.5);
+    g.fillCircle(sx, sy, 1 * scale);
+  },
+  // 2: cloud (3-4 overlapping semi-transparent circles)
+  function(g, sx, sy, color, alpha, size, scale) {
+    g.fillStyle(color, alpha * 0.4);
+    g.fillCircle(sx - 1.5 * scale, sy - 1 * scale, 2.5 * scale);
+    g.fillCircle(sx + 1.5 * scale, sy - 0.5 * scale, 2 * scale);
+    g.fillCircle(sx, sy + 1 * scale, 2.2 * scale);
+    g.fillStyle(brightenColor(color, 25), alpha * 0.6);
+    g.fillCircle(sx, sy - 0.5 * scale, 1.5 * scale);
+  },
+  // 3: dot cluster (4-5 tiny dots in a pattern)
+  function(g, sx, sy, color, alpha, size, scale) {
+    const dots = [[0, 0], [-2, -1.5], [2, -1], [-1, 2], [1.5, 1.5]];
+    for (let j = 0; j < dots.length; j++) {
+      const r = j === 0 ? 1.5 : 1;
+      g.fillStyle(j === 0 ? brightenColor(color, 20) : color, alpha * (j === 0 ? 1 : 0.7));
+      g.fillCircle(sx + dots[j][0] * scale, sy + dots[j][1] * scale, r * scale);
+    }
+  },
+  // 4: spiral (multi-segment spiral)
+  function(g, sx, sy, color, alpha, size, scale) {
+    g.lineStyle(1, color, alpha);
+    const turns = 1.5;
+    const segs = 8;
+    let px = sx, py = sy;
+    for (let j = 1; j <= segs; j++) {
+      const a = (j / segs) * turns * Math.PI * 2;
+      const r = (j / segs) * 3.5 * scale;
+      const nx = sx + Math.cos(a) * r;
+      const ny = sy + Math.sin(a) * r;
+      g.lineBetween(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+    g.fillStyle(brightenColor(color, 30), alpha);
+    g.fillCircle(sx, sy, 1 * scale);
+  },
+  // 5: burst (short radiating lines — starburst)
+  function(g, sx, sy, color, alpha, size, scale) {
+    const rays = 6;
+    const rayLen = 3.5 * scale;
+    g.fillStyle(color, alpha);
+    g.fillCircle(sx, sy, 1.2 * scale);
+    for (let j = 0; j < rays; j++) {
+      const a = (j / rays) * Math.PI * 2;
+      g.lineStyle(1, brightenColor(color, 20 + j * 5), alpha);
+      g.lineBetween(sx, sy, sx + Math.cos(a) * rayLen, sy + Math.sin(a) * rayLen);
+    }
+  },
+];
+
+const VINE_VARIANTS = [
+  // 0: wavy (original — sinusoidal segments + leaves)
+  function(g, vx, vy, angle, segLen, lineW, color, segments, waveMag, leafSize, idx, scale) {
+    let px = vx, py = vy;
+    g.lineStyle(lineW, color);
+    for (let s = 0; s < segments; s++) {
+      const wave = Math.sin(s * 2.5 + idx) * waveMag;
+      const nx = px + Math.cos(angle) * segLen + wave;
+      const ny = py + Math.sin(angle) * segLen;
+      g.lineBetween(px, py, nx, ny);
+      if (s === 1 || s === 3) {
+        g.fillStyle(brightenColor(color, 25));
+        const la = angle + Math.PI / 2;
+        g.fillTriangle(nx, ny, nx + Math.cos(la) * leafSize, ny + Math.sin(la) * leafSize, nx + Math.cos(angle) * (leafSize - 1 * scale), ny + Math.sin(angle) * (leafSize - 1 * scale));
+      }
+      px = nx; py = ny;
+    }
+    g.fillStyle(brightenColor(color, 30));
+    g.fillCircle(px, py, leafSize * 0.65);
+  },
+  // 1: coiling (tighter spiral — high frequency)
+  function(g, vx, vy, angle, segLen, lineW, color, segments, waveMag, leafSize, idx, scale) {
+    let px = vx, py = vy;
+    g.lineStyle(lineW, color);
+    for (let s = 0; s < segments; s++) {
+      const wave = Math.sin(s * 4.5 + idx) * waveMag * 1.3;
+      const nx = px + Math.cos(angle) * segLen * 0.85 + wave;
+      const ny = py + Math.sin(angle) * segLen * 0.85;
+      g.lineBetween(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+    // Coil tip: small circle
+    g.lineStyle(Math.max(1, 1 * scale), brightenColor(color, 30));
+    const tipSegs = 6;
+    const coilR = 2.5 * scale;
+    for (let j = 0; j < tipSegs; j++) {
+      const a1 = (j / tipSegs) * Math.PI * 2;
+      const a2 = ((j + 1) / tipSegs) * Math.PI * 2;
+      g.lineBetween(px + Math.cos(a1) * coilR, py + Math.sin(a1) * coilR, px + Math.cos(a2) * coilR, py + Math.sin(a2) * coilR);
+    }
+  },
+  // 2: zigzag (sharp angle changes)
+  function(g, vx, vy, angle, segLen, lineW, color, segments, waveMag, leafSize, idx, scale) {
+    let px = vx, py = vy;
+    g.lineStyle(lineW, color);
+    for (let s = 0; s < segments; s++) {
+      const zigAngle = angle + (s % 2 === 0 ? 0.4 : -0.4);
+      const nx = px + Math.cos(zigAngle) * segLen;
+      const ny = py + Math.sin(zigAngle) * segLen;
+      g.lineBetween(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+    g.fillStyle(brightenColor(color, 30));
+    g.fillTriangle(px, py, px + Math.cos(angle) * leafSize, py + Math.sin(angle) * leafSize, px + Math.cos(angle + Math.PI / 2) * leafSize * 0.5, py + Math.sin(angle + Math.PI / 2) * leafSize * 0.5);
+  },
+  // 3: branching (splits into two thinner vines)
+  function(g, vx, vy, angle, segLen, lineW, color, segments, waveMag, leafSize, idx, scale) {
+    let px = vx, py = vy;
+    const splitAt = Math.min(2, segments - 1);
+    g.lineStyle(lineW, color);
+    for (let s = 0; s < splitAt; s++) {
+      const wave = Math.sin(s * 2.5 + idx) * waveMag * 0.5;
+      const nx = px + Math.cos(angle) * segLen + wave;
+      const ny = py + Math.sin(angle) * segLen;
+      g.lineBetween(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+    // Branch into two
+    const thinW = Math.max(1, lineW * 0.6);
+    for (const branchAngle of [angle - 0.35, angle + 0.35]) {
+      let bx = px, by = py;
+      g.lineStyle(thinW, brightenColor(color, 10));
+      for (let s = 0; s < segments - splitAt; s++) {
+        const nx = bx + Math.cos(branchAngle) * segLen * 0.8;
+        const ny = by + Math.sin(branchAngle) * segLen * 0.8;
+        g.lineBetween(bx, by, nx, ny);
+        bx = nx; by = ny;
+      }
+      g.fillStyle(brightenColor(color, 30));
+      g.fillCircle(bx, by, leafSize * 0.5);
+    }
+  },
+  // 4: looping (includes a small loop at a joint)
+  function(g, vx, vy, angle, segLen, lineW, color, segments, waveMag, leafSize, idx, scale) {
+    let px = vx, py = vy;
+    g.lineStyle(lineW, color);
+    const loopAt = Math.min(2, segments - 1);
+    for (let s = 0; s < segments; s++) {
+      const wave = Math.sin(s * 2.5 + idx) * waveMag;
+      const nx = px + Math.cos(angle) * segLen + wave;
+      const ny = py + Math.sin(angle) * segLen;
+      g.lineBetween(px, py, nx, ny);
+      // Draw loop at the loop joint
+      if (s === loopAt) {
+        g.lineStyle(Math.max(1, 1 * scale), brightenColor(color, 15));
+        const loopR = 3 * scale;
+        const loopSegs = 8;
+        for (let j = 0; j < loopSegs; j++) {
+          const a1 = (j / loopSegs) * Math.PI * 2;
+          const a2 = ((j + 1) / loopSegs) * Math.PI * 2;
+          g.lineBetween(nx + Math.cos(a1) * loopR, ny + Math.sin(a1) * loopR, nx + Math.cos(a2) * loopR, ny + Math.sin(a2) * loopR);
+        }
+        g.lineStyle(lineW, color);
+      }
+      px = nx; py = ny;
+    }
+    g.fillStyle(brightenColor(color, 30));
+    g.fillCircle(px, py, leafSize * 0.65);
+  },
+  // 5: thorned (straight segments with small triangle barbs)
+  function(g, vx, vy, angle, segLen, lineW, color, segments, waveMag, leafSize, idx, scale) {
+    let px = vx, py = vy;
+    g.lineStyle(lineW, color);
+    const perpA = angle + Math.PI / 2;
+    for (let s = 0; s < segments; s++) {
+      const nx = px + Math.cos(angle) * segLen;
+      const ny = py + Math.sin(angle) * segLen;
+      g.lineBetween(px, py, nx, ny);
+      // Small thorn barbs at each joint
+      const side = s % 2 === 0 ? 1 : -1;
+      g.fillStyle(darkenColor(color, 20));
+      const barbLen = 2.5 * scale;
+      g.fillTriangle(
+        nx, ny,
+        nx + Math.cos(perpA) * barbLen * side, ny + Math.sin(perpA) * barbLen * side,
+        nx + Math.cos(angle) * barbLen * 0.5, ny + Math.sin(angle) * barbLen * 0.5,
+      );
+      px = nx; py = ny;
+    }
+    g.fillStyle(brightenColor(color, 30));
+    g.fillCircle(px, py, leafSize * 0.5);
+  },
+];
+
+// ── Trait Drawing Helpers (with per-trait variants and scale) ────
+
+function drawRoots(g, cx, cy, elements, mut, scale = 1) {
+  if (!elements.length) return;
+  const n = Math.min(elements.length, 6);
+  const defaultColor = CATEGORY_COLORS.root;
+  const bodyOffset = mut ? (mut.bodyScale - 1) * 10 * scale : 0;
+
+  // Central taproot at 3+
   if (n >= 3) {
-    g.lineStyle(n >= 5 ? 4 : 3, darkenColor(rootColor, 20));
-    g.lineBetween(cx, cy + 13 + bodyOffset, cx, cy + 28 + bodyOffset);
-    g.lineStyle(2, rootColor);
-    g.lineBetween(cx - 3, cy + 22 + bodyOffset, cx - 8, cy + 30 + bodyOffset);
-    g.lineBetween(cx + 3, cy + 22 + bodyOffset, cx + 8, cy + 30 + bodyOffset);
+    g.lineStyle(Math.max(1, (n >= 5 ? 4 : 3) * scale), darkenColor(defaultColor, 20));
+    g.lineBetween(cx, cy + 13 * scale + bodyOffset, cx, cy + 28 * scale + bodyOffset);
+    g.lineStyle(Math.max(1, 2 * scale), defaultColor);
+    g.lineBetween(cx - 3 * scale, cy + 22 * scale + bodyOffset, cx - 8 * scale, cy + 30 * scale + bodyOffset);
+    g.lineBetween(cx + 3 * scale, cy + 22 * scale + bodyOffset, cx + 8 * scale, cy + 30 * scale + bodyOffset);
   }
 
   for (let i = 0; i < n; i++) {
+    const elem = elements[i];
     const angle = Math.PI / 2 + (i - n / 2 + 0.5) * 0.35;
-    const startX = cx + Math.cos(angle) * (6 + bodyOffset * 0.5);
-    const startY = cy + 13 + bodyOffset;
+    const startX = cx + Math.cos(angle) * (6 * scale + bodyOffset * 0.5);
+    const startY = cy + 13 * scale + bodyOffset;
+    const color = elem.color || defaultColor;
+    const length = 10 * scale;
+    const hasHairs = n >= 5;
 
-    g.lineStyle(2, rootColor);
-    const midX = startX + Math.cos(angle) * 10;
-    const midY = startY + Math.sin(angle) * 10;
-    g.lineBetween(startX, startY, midX, midY);
-
-    g.lineStyle(1, brightenColor(rootColor, 15));
-    g.lineBetween(midX, midY, midX + Math.cos(angle - 0.4) * 7, midY + Math.sin(angle - 0.4) * 7);
-    g.lineBetween(midX, midY, midX + Math.cos(angle + 0.4) * 7, midY + Math.sin(angle + 0.4) * 7);
-
-    // Root hairs at high counts
-    if (n >= 5) {
-      g.lineStyle(1, brightenColor(rootColor, 25), 0.6);
-      const tipX = midX + Math.cos(angle) * 4;
-      const tipY = midY + Math.sin(angle) * 4;
-      g.lineBetween(tipX, tipY, tipX + Math.cos(angle - 0.7) * 4, tipY + Math.sin(angle - 0.7) * 4);
-      g.lineBetween(tipX, tipY, tipX + Math.cos(angle + 0.7) * 4, tipY + Math.sin(angle + 0.7) * 4);
-    }
+    ROOT_VARIANTS[elem.variant](g, startX, startY, angle, length, color, scale, hasHairs);
   }
 }
 
-function drawThorns(g, cx, cy, count, mut) {
-  if (count <= 0) return;
-  const n = Math.min(count, 8);
+function drawThorns(g, cx, cy, elements, mut, scale = 1) {
+  if (!elements.length) return;
+  const n = Math.min(elements.length, 8);
   const fierce = mut && mut.bodyAngularity > 0.2;
-  const thornLen = fierce ? 10 : 8;
-  const thornW = fierce ? 3.5 : 3;
+  const thornLen = (fierce ? 10 : 8) * scale;
+  const thornW = (fierce ? 3.5 : 3) * scale;
+  const highlightAmt = fierce ? 55 : 40;
 
-  // Red glow aura at high counts — stronger with mutation
+  // Red glow aura at high counts
   if (n >= 4 || (mut && mut.hasRedGlow)) {
     const glowAlpha = mut && mut.hasRedGlow ? 0.15 : 0.1;
     g.fillStyle(0xFF2222, glowAlpha);
-    g.fillCircle(cx, cy, fierce ? 22 : 18);
+    g.fillCircle(cx, cy, (fierce ? 22 : 18) * scale);
   }
 
   for (let i = 0; i < n; i++) {
+    const elem = elements[i];
     const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-    const baseR = mut ? 11 * mut.bodyScale : 11;
+    const baseR = (mut ? 11 * mut.bodyScale : 11) * scale;
     const bx = cx + Math.cos(angle) * baseR;
     const by = cy + Math.sin(angle) * baseR;
-    const tipX = bx + Math.cos(angle) * thornLen;
-    const tipY = by + Math.sin(angle) * thornLen;
-    const perpX = Math.cos(angle + Math.PI / 2);
-    const perpY = Math.sin(angle + Math.PI / 2);
+    const color = elem.color || CATEGORY_COLORS.thorn;
 
-    // Dark outline
-    g.fillStyle(darkenColor(CATEGORY_COLORS.thorn, 40));
-    g.fillTriangle(tipX, tipY, bx + perpX * thornW, by + perpY * thornW, bx - perpX * thornW, by - perpY * thornW);
-    // Bright inner
-    g.fillStyle(CATEGORY_COLORS.thorn);
-    g.fillTriangle(tipX, tipY, bx + perpX * (thornW - 1), by + perpY * (thornW - 1), bx - perpX * (thornW - 1), by - perpY * (thornW - 1));
-    // Highlight edge
-    g.fillStyle(brightenColor(CATEGORY_COLORS.thorn, fierce ? 55 : 40));
-    g.fillTriangle(tipX, tipY, bx + perpX * 1, by + perpY * 1, bx, by);
+    THORN_VARIANTS[elem.variant](g, bx, by, angle, thornLen, thornW, color, highlightAmt, scale);
   }
 }
 
-function drawBlooms(g, cx, cy, count, mut) {
-  if (count <= 0) return;
-  const n = Math.min(count, 5);
-  const bloomColor = CATEGORY_COLORS.bloom;
+function drawBlooms(g, cx, cy, elements, mut, scale = 1) {
+  if (!elements.length) return;
+  const n = Math.min(elements.length, 5);
+  const defaultColor = CATEGORY_COLORS.bloom;
   const bright = mut && mut.bodyBrightnessShift > 15;
-  const petalLight = brightenColor(bloomColor, bright ? 55 : 40);
-  const petalSize = bright ? 3.5 : 3;
+  const petalSize = (bright ? 3.5 : 3) * scale;
 
-  // Crown bloom at high counts — larger if shimmer active
+  // Crown bloom at high counts
   if (n >= 3) {
-    const crownSize = mut && mut.hasShimmer ? 5 : 4;
-    drawFlower(g, cx, cy - 22, bloomColor, petalLight, crownSize);
+    const crownSize = (mut && mut.hasShimmer ? 5 : 4) * scale;
+    const crownElem = elements[0];
+    const crownColor = crownElem.color || defaultColor;
+    const crownHighlight = brightenColor(crownColor, bright ? 55 : 40);
+    BLOOM_VARIANTS[crownElem.variant](g, cx, cy - 22 * scale, crownColor, crownHighlight, crownSize);
   }
 
   const sc = mut ? mut.bodyScale : 1;
   const positions = [
-    [-14 * sc, -8], [14 * sc, -6], [-12 * sc, 6], [12 * sc, 8], [0, 12 * sc],
+    [-14 * sc * scale, -8 * scale], [14 * sc * scale, -6 * scale],
+    [-12 * sc * scale, 6 * scale], [12 * sc * scale, 8 * scale],
+    [0, 12 * sc * scale],
   ];
   for (let i = 0; i < n; i++) {
+    const elem = elements[i];
     const [ox, oy] = positions[i];
-    drawFlower(g, cx + ox, cy + oy, bloomColor, petalLight, petalSize);
+    const color = elem.color || defaultColor;
+    const highlight = brightenColor(color, bright ? 55 : 40);
+    BLOOM_VARIANTS[elem.variant](g, cx + ox, cy + oy, color, highlight, petalSize);
   }
 }
 
-function drawFlower(g, fx, fy, color, highlight, petalSize) {
-  // 5 petals with 2-tone coloring
-  for (let p = 0; p < 5; p++) {
-    const a = (p / 5) * Math.PI * 2 - Math.PI / 2;
-    const px = fx + Math.cos(a) * petalSize;
-    const py = fy + Math.sin(a) * petalSize;
-    g.fillStyle(color);
-    g.fillCircle(px, py, petalSize);
-    g.fillStyle(highlight);
-    g.fillCircle(px + Math.cos(a) * 0.5, py + Math.sin(a) * 0.5, petalSize * 0.5);
-  }
-  // Center
-  g.fillStyle(0xFFEE44);
-  g.fillCircle(fx, fy, petalSize * 0.6);
-  g.fillStyle(0xFFFF88);
-  g.fillCircle(fx - 0.5, fy - 0.5, petalSize * 0.3);
-}
-
-function drawSpores(g, cx, cy, count, mut) {
-  if (count <= 0) return;
-  const n = Math.min(count, 6);
-  const sporeColor = CATEGORY_COLORS.spore;
+function drawSpores(g, cx, cy, elements, mut, scale = 1) {
+  if (!elements.length) return;
+  const n = Math.min(elements.length, 6);
+  const defaultColor = CATEGORY_COLORS.spore;
   const misty = mut && mut.hasMist;
   const sporeAlpha = misty ? 0.7 : 1.0;
 
-  // Haze ring at high counts — wider and softer with mist
+  // Haze ring at high counts
   if (n >= 3 || misty) {
-    const hazeR = misty ? 30 : 26;
-    g.fillStyle(sporeColor, misty ? 0.1 : 0.07);
+    const hazeR = (misty ? 30 : 26) * scale;
+    g.fillStyle(defaultColor, misty ? 0.1 : 0.07);
     g.fillCircle(cx, cy, hazeR);
   }
 
   for (let i = 0; i < n; i++) {
+    const elem = elements[i];
     const angle = (i / n) * Math.PI * 2;
-    const dist = 18 + (i % 2) * 4;
+    const dist = (18 + (i % 2) * 4) * scale;
     const sx = cx + Math.cos(angle) * dist;
     const sy = cy + Math.sin(angle) * dist;
+    const color = elem.color || defaultColor;
+    const size = (misty ? 2.5 : 2) * scale;
 
-    // Star/asterisk shape — softer when misty
-    g.fillStyle(sporeColor, sporeAlpha);
-    g.fillCircle(sx, sy, misty ? 2.5 : 2);
-    g.lineStyle(1, brightenColor(sporeColor, 30), sporeAlpha);
-    g.lineBetween(sx - 3, sy, sx + 3, sy);
-    g.lineBetween(sx, sy - 3, sx, sy + 3);
-    g.lineBetween(sx - 2, sy - 2, sx + 2, sy + 2);
+    SPORE_VARIANTS[elem.variant](g, sx, sy, color, sporeAlpha, size, scale);
 
     // Secondary smaller spore
-    const s2x = cx + Math.cos(angle + 0.3) * (dist - 5);
-    const s2y = cy + Math.sin(angle + 0.3) * (dist - 5);
-    g.fillStyle(brightenColor(sporeColor, 20), 0.5 * sporeAlpha);
-    g.fillCircle(s2x, s2y, 1.5);
+    const s2x = cx + Math.cos(angle + 0.3) * (dist - 5 * scale);
+    const s2y = cy + Math.sin(angle + 0.3) * (dist - 5 * scale);
+    g.fillStyle(brightenColor(color, 20), 0.5 * sporeAlpha);
+    g.fillCircle(s2x, s2y, 1.5 * scale);
 
     // Extra haze particle when misty
     if (misty) {
-      const h3x = cx + Math.cos(angle - 0.4) * (dist + 3);
-      const h3y = cy + Math.sin(angle - 0.4) * (dist + 3);
-      g.fillStyle(sporeColor, 0.15);
-      g.fillCircle(h3x, h3y, 2);
+      const h3x = cx + Math.cos(angle - 0.4) * (dist + 3 * scale);
+      const h3y = cy + Math.sin(angle - 0.4) * (dist + 3 * scale);
+      g.fillStyle(color, 0.15);
+      g.fillCircle(h3x, h3y, 2 * scale);
     }
   }
 }
 
-function drawVines(g, cx, cy, count, mut) {
-  if (count <= 0) return;
-  const n = Math.min(count, 5);
-  const vineColor = CATEGORY_COLORS.vine;
+function drawVines(g, cx, cy, elements, mut, scale = 1) {
+  if (!elements.length) return;
+  const n = Math.min(elements.length, 5);
+  const defaultColor = CATEGORY_COLORS.vine;
   const armored = mut && mut.hasVineArmor;
-  const lineW = armored ? 3 : 2;
-  const segLen = armored ? 8 : 7;
+  const lineW = Math.max(1, (armored ? 3 : 2) * scale);
+  const segLen = (armored ? 8 : 7) * scale;
+  const waveMag = (armored ? 5 : 4) * scale;
+  const leafSize = (armored ? 4 : 3) * scale;
+  const segments = armored ? 5 : 4;
 
   for (let i = 0; i < n; i++) {
+    const elem = elements[i];
     const angle = -Math.PI / 2 + (i - n / 2 + 0.5) * 0.7;
-    const baseR = mut ? 10 * mut.bodyScale : 10;
-    let vx = cx + Math.cos(angle) * baseR;
-    let vy = cy + Math.sin(angle) * 4;
+    const baseR = (mut ? 10 * mut.bodyScale : 10) * scale;
+    const vx = cx + Math.cos(angle) * baseR;
+    const vy = cy + Math.sin(angle) * 4 * scale;
+    const color = elem.color || defaultColor;
 
-    g.lineStyle(lineW, vineColor);
-    const segments = armored ? 5 : 4;
-    for (let s = 0; s < segments; s++) {
-      const wave = Math.sin(s * 2.5 + i) * (armored ? 5 : 4);
-      const nx = vx + Math.cos(angle) * segLen + wave;
-      const ny = vy + Math.sin(angle) * segLen;
-      g.lineBetween(vx, vy, nx, ny);
-
-      // Tiny leaf at segment joints
-      if (s === 1 || s === 3) {
-        g.fillStyle(brightenColor(vineColor, 25));
-        const leafAngle = angle + Math.PI / 2;
-        const leafSize = armored ? 4 : 3;
-        g.fillTriangle(
-          nx, ny,
-          nx + Math.cos(leafAngle) * leafSize, ny + Math.sin(leafAngle) * leafSize,
-          nx + Math.cos(angle) * (leafSize - 1), ny + Math.sin(angle) * (leafSize - 1),
-        );
-      }
-
-      vx = nx;
-      vy = ny;
-    }
-
-    // Leaf at vine tip — larger when armored
-    g.fillStyle(brightenColor(vineColor, 30));
-    g.fillCircle(vx, vy, armored ? 3 : 2);
-  }
-}
-
-// ── Large Trait Drawing (for 128x128 victory) ────────────────────
-
-function drawRootsLarge(g, cx, cy, count) {
-  if (count <= 0) return;
-  const n = Math.min(count, 6);
-  const rootColor = CATEGORY_COLORS.root;
-
-  if (n >= 4) {
-    g.lineStyle(5, darkenColor(rootColor, 20));
-    g.lineBetween(cx, cy + 26, cx, cy + 52);
-    g.lineStyle(3, rootColor);
-    g.lineBetween(cx - 5, cy + 42, cx - 14, cy + 56);
-    g.lineBetween(cx + 5, cy + 42, cx + 14, cy + 56);
-  }
-
-  for (let i = 0; i < n; i++) {
-    const angle = Math.PI / 2 + (i - n / 2 + 0.5) * 0.35;
-    const startX = cx + Math.cos(angle) * 12;
-    const startY = cy + 26;
-
-    g.lineStyle(3, rootColor);
-    const midX = startX + Math.cos(angle) * 18;
-    const midY = startY + Math.sin(angle) * 18;
-    g.lineBetween(startX, startY, midX, midY);
-
-    g.lineStyle(2, brightenColor(rootColor, 15));
-    g.lineBetween(midX, midY, midX + Math.cos(angle - 0.4) * 12, midY + Math.sin(angle - 0.4) * 12);
-    g.lineBetween(midX, midY, midX + Math.cos(angle + 0.4) * 12, midY + Math.sin(angle + 0.4) * 12);
-
-    // Tiny root hairs
-    g.lineStyle(1, brightenColor(rootColor, 30));
-    const tipX = midX + Math.cos(angle) * 5;
-    const tipY = midY + Math.sin(angle) * 5;
-    g.lineBetween(tipX, tipY, tipX + Math.cos(angle - 0.8) * 5, tipY + Math.sin(angle - 0.8) * 5);
-    g.lineBetween(tipX, tipY, tipX + Math.cos(angle + 0.8) * 5, tipY + Math.sin(angle + 0.8) * 5);
-  }
-}
-
-function drawThornsLarge(g, cx, cy, count, mut) {
-  if (count <= 0) return;
-  const n = Math.min(count, 8);
-  const fierce = mut && mut.bodyAngularity > 0.2;
-  const thornLen = fierce ? 18 : 14;
-  const thornW = fierce ? 6 : 5;
-
-  if (n >= 4 || (mut && mut.hasRedGlow)) {
-    const glowAlpha = mut && mut.hasRedGlow ? 0.12 : 0.08;
-    g.fillStyle(0xFF2222, glowAlpha);
-    g.fillCircle(cx, cy, fierce ? 42 : 36);
-  }
-
-  for (let i = 0; i < n; i++) {
-    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-    const baseR = mut ? 22 * mut.bodyScale : 22;
-    const bx = cx + Math.cos(angle) * baseR;
-    const by = cy + Math.sin(angle) * baseR;
-    const tipX = bx + Math.cos(angle) * thornLen;
-    const tipY = by + Math.sin(angle) * thornLen;
-    const perpX = Math.cos(angle + Math.PI / 2);
-    const perpY = Math.sin(angle + Math.PI / 2);
-
-    g.fillStyle(darkenColor(CATEGORY_COLORS.thorn, 40));
-    g.fillTriangle(tipX, tipY, bx + perpX * thornW, by + perpY * thornW, bx - perpX * thornW, by - perpY * thornW);
-    g.fillStyle(CATEGORY_COLORS.thorn);
-    g.fillTriangle(tipX, tipY, bx + perpX * (thornW - 2), by + perpY * (thornW - 2), bx - perpX * (thornW - 2), by - perpY * (thornW - 2));
-    g.fillStyle(brightenColor(CATEGORY_COLORS.thorn, fierce ? 65 : 50));
-    g.fillTriangle(tipX, tipY, bx + perpX * 1.5, by + perpY * 1.5, bx, by);
-  }
-}
-
-function drawBloomsLarge(g, cx, cy, count, mut) {
-  if (count <= 0) return;
-  const n = Math.min(count, 5);
-  const bloomColor = CATEGORY_COLORS.bloom;
-  const bright = mut && mut.bodyBrightnessShift > 15;
-  const petalLight = brightenColor(bloomColor, bright ? 55 : 40);
-  const petalSize = bright ? 6 : 5;
-
-  if (n >= 3) {
-    const crownSize = mut && mut.hasShimmer ? 9 : 7;
-    drawFlower(g, cx, cy - 44, bloomColor, petalLight, crownSize);
-  }
-
-  const sc = mut ? mut.bodyScale : 1;
-  const positions = [[-28 * sc, -16], [28 * sc, -12], [-24 * sc, 12], [24 * sc, 16], [0, 24 * sc]];
-  for (let i = 0; i < n; i++) {
-    const [ox, oy] = positions[i];
-    drawFlower(g, cx + ox, cy + oy, bloomColor, petalLight, petalSize);
-  }
-}
-
-function drawSporesLarge(g, cx, cy, count, mut) {
-  if (count <= 0) return;
-  const n = Math.min(count, 6);
-  const sporeColor = CATEGORY_COLORS.spore;
-  const misty = mut && mut.hasMist;
-  const sporeAlpha = misty ? 0.7 : 1.0;
-
-  if (n >= 3 || misty) {
-    const hazeR = misty ? 58 : 52;
-    g.fillStyle(sporeColor, misty ? 0.09 : 0.06);
-    g.fillCircle(cx, cy, hazeR);
-  }
-
-  for (let i = 0; i < n; i++) {
-    const angle = (i / n) * Math.PI * 2;
-    const dist = 36 + (i % 2) * 8;
-    const sx = cx + Math.cos(angle) * dist;
-    const sy = cy + Math.sin(angle) * dist;
-
-    g.fillStyle(sporeColor, sporeAlpha);
-    g.fillCircle(sx, sy, misty ? 4 : 3);
-    g.lineStyle(1, brightenColor(sporeColor, 30), sporeAlpha);
-    g.lineBetween(sx - 5, sy, sx + 5, sy);
-    g.lineBetween(sx, sy - 5, sx, sy + 5);
-    g.lineBetween(sx - 3, sy - 3, sx + 3, sy + 3);
-    g.lineBetween(sx + 3, sy - 3, sx - 3, sy + 3);
-
-    const s2x = cx + Math.cos(angle + 0.3) * (dist - 10);
-    const s2y = cy + Math.sin(angle + 0.3) * (dist - 10);
-    g.fillStyle(brightenColor(sporeColor, 20), 0.5 * sporeAlpha);
-    g.fillCircle(s2x, s2y, 2);
-
-    // Extra haze particle when misty
-    if (misty) {
-      const h3x = cx + Math.cos(angle - 0.4) * (dist + 5);
-      const h3y = cy + Math.sin(angle - 0.4) * (dist + 5);
-      g.fillStyle(sporeColor, 0.15);
-      g.fillCircle(h3x, h3y, 3);
-    }
-  }
-}
-
-function drawVinesLarge(g, cx, cy, count, mut) {
-  if (count <= 0) return;
-  const n = Math.min(count, 5);
-  const vineColor = CATEGORY_COLORS.vine;
-  const armored = mut && mut.hasVineArmor;
-  const lineW = armored ? 4 : 3;
-  const segLen = armored ? 14 : 12;
-
-  for (let i = 0; i < n; i++) {
-    const angle = -Math.PI / 2 + (i - n / 2 + 0.5) * 0.7;
-    const baseR = mut ? 20 * mut.bodyScale : 20;
-    let vx = cx + Math.cos(angle) * baseR;
-    let vy = cy + Math.sin(angle) * 8;
-
-    g.lineStyle(lineW, vineColor);
-    const segments = armored ? 6 : 5;
-    for (let s = 0; s < segments; s++) {
-      const wave = Math.sin(s * 2.5 + i) * (armored ? 9 : 7);
-      const nx = vx + Math.cos(angle) * segLen + wave;
-      const ny = vy + Math.sin(angle) * segLen;
-      g.lineBetween(vx, vy, nx, ny);
-
-      if (s % 2 === 1) {
-        g.fillStyle(brightenColor(vineColor, 25));
-        const la = angle + Math.PI / 2;
-        const leafSize = armored ? 7 : 5;
-        g.fillTriangle(nx, ny, nx + Math.cos(la) * leafSize, ny + Math.sin(la) * leafSize, nx + Math.cos(angle) * (leafSize - 1), ny + Math.sin(angle) * (leafSize - 1));
-      }
-      vx = nx;
-      vy = ny;
-    }
-
-    g.fillStyle(brightenColor(vineColor, 30));
-    g.fillCircle(vx, vy, armored ? 4 : 3);
+    VINE_VARIANTS[elem.variant](g, vx, vy, angle, segLen, lineW, color, segments, waveMag, leafSize, i, scale);
   }
 }
 

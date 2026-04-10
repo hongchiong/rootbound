@@ -58,7 +58,7 @@ export const DAMAGE_TYPES = {
     id: 'frost',
     name: 'Frost',
     color: '#AADDFF',
-    description: 'Slows 40% for 2s; 3 frost hits = Frozen stun 1.5s',
+    description: 'Slows 40% briefly; 3 frost hits = Frozen stun 1.5s',
     armorPenetration: 0,
     magicPenetration: 0,
     isPhysical: false,
@@ -141,6 +141,8 @@ export function computeStats(baseStats, traits, setBonuses = null, synergies = n
     if (s.knockbackStrength) stats.knockbackStrength = (stats.knockbackStrength || 0) + s.knockbackStrength;
     if (s.knockbackEveryN) stats.knockbackEveryN = s.knockbackEveryN;
     if (s.rootOnHitDuration) stats.rootOnHitDuration = Math.max(stats.rootOnHitDuration || 0, s.rootOnHitDuration);
+    if (s.onHitSlow) stats.onHitSlow = Math.max(stats.onHitSlow || 0, s.onHitSlow);
+    if (s.onHitSlowDuration) stats.onHitSlowDuration = Math.max(stats.onHitSlowDuration || 0, s.onHitSlowDuration);
     if (s.debuffResist) stats.debuffResist = (stats.debuffResist || 0) + s.debuffResist;
     if (s.hpRegenPerBloom) stats.hpRegenPerBloom = (stats.hpRegenPerBloom || 0) + s.hpRegenPerBloom;
     if (s.explosiveSplash) stats.explosiveSplash = (stats.explosiveSplash || 0) + s.explosiveSplash;
@@ -157,7 +159,7 @@ export function computeStats(baseStats, traits, setBonuses = null, synergies = n
     if (s.enemyDamageReduce) stats.enemyDamageReduce = (stats.enemyDamageReduce || 0) + s.enemyDamageReduce;
     if (s.sporeChainTargets) stats.sporeChainTargets = (stats.sporeChainTargets || 0) + s.sporeChainTargets;
     if (s.sporePersistDuration) stats.sporePersistDuration = Math.max(stats.sporePersistDuration || 0, s.sporePersistDuration);
-    if (s.sporeStrikeCount) stats.sporeStrikeCount = (stats.sporeStrikeCount || 0) + s.sporeStrikeCount;
+    // sporeStrikeCount removed — always exactly 1 strike per volley
     if (s.sporePersistDamage) stats.sporePersistDamage = (stats.sporePersistDamage || 0) + s.sporePersistDamage;
     if (s.sporePull) stats.sporePull = (stats.sporePull || 0) + s.sporePull;
     if (s.sporeConfuse) stats.sporeConfuse = Math.max(stats.sporeConfuse || 0, s.sporeConfuse);
@@ -172,15 +174,27 @@ export function computeStats(baseStats, traits, setBonuses = null, synergies = n
     if (s.onHitHealAmount) stats.onHitHealAmount = (stats.onHitHealAmount || 0) + s.onHitHealAmount;
     if (s.vampiricPercent) stats.vampiricPercent = (stats.vampiricPercent || 0) + s.vampiricPercent;
     if (s.regenMultiplier) stats.regenMultiplier = (stats.regenMultiplier || 0) + s.regenMultiplier;
+    if (s.phoenixRevive) stats.phoenixRevive = Math.max(stats.phoenixRevive || 0, s.phoenixRevive);
     if (s.sporeDamageMult) stats.sporeDamageMult = (stats.sporeDamageMult || 0) + s.sporeDamageMult;
     if (s.sporeIntervalReduction) stats.sporeIntervalReduction = (stats.sporeIntervalReduction || 0) + s.sporeIntervalReduction;
+    if (s.armorPenResist) stats.armorPenResist = (stats.armorPenResist || 0) + s.armorPenResist;
+    if (s.armorPerTraits) stats.armorPerTraits = s.armorPerTraits;
+    if (s.regenPerCategory) stats.regenPerCategory = (stats.regenPerCategory || 0) + s.regenPerCategory;
+    if (s.bossRegenDouble) stats.bossRegenDouble = true;
+    if (s.onHitHealPercent) stats.onHitHealPercent = (stats.onHitHealPercent || 0) + s.onHitHealPercent;
+    if (s.healOnKillPercent) stats.healOnKillPercent = (stats.healOnKillPercent || 0) + s.healOnKillPercent;
+    if (s.doubleHealOnKill) stats.doubleHealOnKill = true;
+    if (s.bleedArmorReduce) stats.bleedArmorReduce = (stats.bleedArmorReduce || 0) + s.bleedArmorReduce;
+    if (s.bleedMissingHpScale) stats.bleedMissingHpScale = true;
+    if (s.lightningChains) stats.lightningChains = (stats.lightningChains || 0) + s.lightningChains;
+    if (s.critApplyAllDots) stats.critApplyAllDots = true;
+    if (s.prismaticCycle) stats.prismaticCycle = true;
+    if (s.extraTargetDamageFalloff) stats.extraTargetDamageFalloff = s.extraTargetDamageFalloff;
 
-    // Collect damage types (both regular and spore damage types feed into primary/secondary)
+    // Collect attack damage types — spore damage types are tracked separately
+    // so spore traits don't change the player's primary/secondary attack type
     if (s.damageType && s.damageType !== 'normal') {
       collectedDamageTypes.push(s.damageType);
-    }
-    if (s.sporeDamageType && s.sporeDamageType !== 'normal') {
-      collectedDamageTypes.push(s.sporeDamageType);
     }
   }
 
@@ -191,6 +205,17 @@ export function computeStats(baseStats, traits, setBonuses = null, synergies = n
       if (t.visual && t.visual.blooms) bloomCount += t.visual.blooms;
     }
     stats.hpRegen += stats.hpRegenPerBloom * bloomCount;
+  }
+
+  // Living Armor: +1 armor per N traits grafted
+  if (stats.armorPerTraits) {
+    stats.armor += Math.floor(traits.length / stats.armorPerTraits);
+  }
+
+  // Root Network: +regen per unique graft category
+  if (stats.regenPerCategory) {
+    const uniqueCategories = new Set(traits.map(t => t.category));
+    stats.hpRegen += stats.regenPerCategory * uniqueCategories.size;
   }
 
   // Phase 2: Set bonus application
@@ -238,7 +263,7 @@ export function computeStats(baseStats, traits, setBonuses = null, synergies = n
 
   // Apply regen multiplier (capped at x3 to prevent unkillable builds)
   if (stats.regenMultiplier) {
-    const cappedMult = Math.min(stats.regenMultiplier, 2.0);
+    const cappedMult = Math.min(stats.regenMultiplier, 2.5);
     stats.hpRegen = Math.floor(stats.hpRegen * (1 + cappedMult));
   }
 
@@ -271,7 +296,7 @@ export function computeStats(baseStats, traits, setBonuses = null, synergies = n
   // Spore strike radius (base 60px per strike, smaller since strikes target enemies directly)
   stats.effectiveSporeStrikeRadius = 60 * (1 + (stats.sporeRadiusMult || 0));
   stats.effectiveSporeRadius = stats.effectiveSporeStrikeRadius; // backward compat
-  stats.effectiveSporeStrikeCount = stats.sporeStrikeCount || 0;
+  stats.effectiveSporeStrikeCount = 1; // hardcoded — always 1 strike per volley
 
   return stats;
 }
@@ -295,9 +320,12 @@ export function calculateDamage(attackerStats, defenderStats = {}, damageTypeOve
   const armor = defenderStats.armor || 0;
   const magicResist = defenderStats.magicResist || 0;
 
-  // Check immunities
+  // Check immunities — immune targets still take base physical damage, but the
+  // elemental effect (DoT, chain, heal, etc.) is suppressed.  We fall back to
+  // 'normal' type so armor applies fully and no on-hit trigger fires.
+  let immuneToType = false;
   if (defenderStats.immunities && defenderStats.immunities.includes(dtId)) {
-    return { damage: 0, isCrit: false, damageType: dtId, evaded: false, immune: true, onHit: null };
+    immuneToType = true;
   }
 
   // Dodge check: dodgeRate reduced by attacker accuracy above 1.0
@@ -308,25 +336,32 @@ export function calculateDamage(attackerStats, defenderStats = {}, damageTypeOve
     return { damage: 0, isCrit: false, damageType: dtId, evaded: true, immune: false, onHit: null };
   }
 
-  // Physical armor reduction
-  if (dtype.isPhysical) {
-    const effectiveArmor = armor * (1 - dtype.armorPenetration);
+  // When immune, fall back to normal-type damage calculation (full armor, no
+  // penetration bonuses, no on-hit effects) so the hit still lands.
+  const effectiveType = immuneToType ? DAMAGE_TYPES.normal : dtype;
+
+  // Physical armor reduction (armorPenResist reduces enemy penetration effectiveness)
+  const penResist = defenderStats.armorPenResist || 0;
+  if (effectiveType.isPhysical) {
+    const reducedPen = Math.max(0, effectiveType.armorPenetration - penResist * 0.01);
+    const effectiveArmor = armor * (1 - reducedPen);
     damage -= effectiveArmor;
   } else {
     // Magic types: apply both armor pen and magic pen
-    const effectiveArmor = armor * (1 - dtype.armorPenetration);
-    const effectiveMR = magicResist * (1 - (dtype.magicPenetration || 0));
+    const reducedPen = Math.max(0, effectiveType.armorPenetration - penResist * 0.01);
+    const effectiveArmor = armor * (1 - reducedPen);
+    const effectiveMR = magicResist * (1 - (effectiveType.magicPenetration || 0));
     damage -= effectiveArmor;
     damage -= effectiveMR;
   }
 
   // Blunt bonus vs armor
-  if (dtype.bonusVsArmor) {
-    damage += Math.floor(armor * dtype.bonusVsArmor);
+  if (effectiveType.bonusVsArmor) {
+    damage += Math.floor(armor * effectiveType.bonusVsArmor);
   }
 
-  // Per-type resistance multiplier
-  if (defenderStats.resistances && defenderStats.resistances[dtId] !== undefined) {
+  // Per-type resistance multiplier (skip if immune — already penalized by losing penetration)
+  if (!immuneToType && defenderStats.resistances && defenderStats.resistances[dtId] !== undefined) {
     damage = Math.floor(damage * defenderStats.resistances[dtId]);
   }
 
@@ -343,7 +378,7 @@ export function calculateDamage(attackerStats, defenderStats = {}, damageTypeOve
     damage = Math.max(1, Math.floor(damage * (1 - defenderStats.damageReduction)));
   }
 
-  return { damage, isCrit, damageType: dtId, evaded: false, immune: false, onHit: dtype.onHit };
+  return { damage, isCrit, damageType: dtId, evaded: false, immune: immuneToType, onHit: immuneToType ? null : dtype.onHit };
 }
 
 // Returns the display color for a damage type

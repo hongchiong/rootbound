@@ -17,6 +17,7 @@ export default class ShopScene extends Phaser.Scene {
     this.waveInBiome = data.waveInBiome || 0;
     this.isBossReward = data.isBossReward || false;
     this.graftedTraits = data.traits || [];
+    this.visualSeed = data.visualSeed || 0;
     this.seedlingHp = data.seedlingHp;
     this.seedlingMaxHp = data.seedlingMaxHp;
 
@@ -28,7 +29,7 @@ export default class ShopScene extends Phaser.Scene {
       } else {
         // Normal wave: heal 50% of missing HP
         const missing = this.seedlingMaxHp - this.seedlingHp;
-        this.seedlingHp = Math.min(this.seedlingMaxHp, this.seedlingHp + missing * 0.6);
+        this.seedlingHp = Math.min(this.seedlingMaxHp, this.seedlingHp + missing * 0.5);
       }
     }
   }
@@ -85,7 +86,7 @@ export default class ShopScene extends Phaser.Scene {
     const existingIds = this.graftedTraits.map(t => t.id);
     const seedlingY = 108;
     if (this.graftedTraits.length > 0) {
-      generateSeedlingTexture(this, this.graftedTraits, 'seedling_shop_preview');
+      generateSeedlingTexture(this, this.graftedTraits, 'seedling_shop_preview', this.visualSeed);
       this.seedlingImg = this.add.image(cx, seedlingY, 'seedling_shop_preview').setScale(1.6).setDepth(1);
     } else {
       this.seedlingImg = this.add.image(cx, seedlingY, 'seedling_base').setScale(1.8).setDepth(1);
@@ -315,7 +316,7 @@ export default class ShopScene extends Phaser.Scene {
   showTraitPreview(trait) {
     // Generate preview texture with this trait added
     const previewTraits = [...this.graftedTraits, trait];
-    generateSeedlingTexture(this, previewTraits, 'seedling_hover_preview');
+    generateSeedlingTexture(this, previewTraits, 'seedling_hover_preview', this.visualSeed);
     this.previewImg.setTexture('seedling_hover_preview');
     this.previewImg.setScale(this.graftedTraits.length > 0 ? 1.6 : 1.8);
 
@@ -374,6 +375,7 @@ export default class ShopScene extends Phaser.Scene {
         traits,
         seedlingHp: this.seedlingHp,
         seedlingMaxHp: this.seedlingMaxHp,
+        visualSeed: this.visualSeed,
       });
     });
   }

@@ -15,7 +15,7 @@ const BIOME_POWER = {
 
 // Target difficulty at each biome position (0 = garden, 1-2 = randomized middle, 3 = emergent).
 // Player accumulates traits between biomes, so difficulty ramps to match.
-const POSITION_TARGETS = [1.0, 1.5, 2.0, 2.8];
+const POSITION_TARGETS = [1.0, 1.35, 2.5, 4.5];
 
 // Returns the stat multiplier for regular enemies in a given biome at a given position.
 // Formula: targetDifficulty / biomeInherentPower — so weaker biomes get boosted
@@ -146,8 +146,8 @@ export function getBiomeWave(biomeId, waveInBiome) {
 const WAVE_DEFS = {
   garden: [
     [{ type: 'weed', count: 4, delay: 800 }, { type: 'slug', count: 3, delay: 1200 }],
-    [{ type: 'weed', count: 5, delay: 700 }, { type: 'beetle', count: 3, delay: 1000 }],
-    [{ type: 'beetle', count: 3, delay: 800 }, { type: 'slug', count: 3, delay: 600 }, { type: 'weed', count: 3, delay: 900 }],
+    [{ type: 'weed', count: 3, delay: 700 }, { type: 'beetle', count: 2, delay: 1200 }],
+    [{ type: 'beetle', count: 2, delay: 1000 }, { type: 'slug', count: 2, delay: 600 }, { type: 'weed', count: 3, delay: 900 }],
   ],
   forest: [
     [{ type: 'woodland_creep', count: 6, delay: 700 }, { type: 'bark_beetle', count: 3, delay: 1200 }],
@@ -170,8 +170,8 @@ const WAVE_DEFS = {
     [{ type: 'swarm_moth', count: 6, delay: 300 }, { type: 'wind_sprite', count: 3, delay: 800 }, { type: 'leaf_hopper', count: 3, delay: 700 }],
   ],
   emergent: [
-    [{ type: 'root_golem', count: 3, delay: 1500 }, { type: 'crystal_crawler', count: 5, delay: 800 }],
-    [{ type: 'emerald_briar', count: 3, delay: 1000 }, { type: 'root_golem', count: 3, delay: 1500 }, { type: 'crystal_crawler', count: 3, delay: 800 }],
-    [{ type: 'root_golem', count: 3, delay: 1200 }, { type: 'crystal_crawler', count: 4, delay: 800 }, { type: 'emerald_briar', count: 3, delay: 900 }],
+    [{ type: 'root_golem', count: 4, delay: 1000 }, { type: 'crystal_crawler', count: 6, delay: 500 }],
+    [{ type: 'emerald_briar', count: 3, delay: 800 }, { type: 'root_golem', count: 4, delay: 1000 }, { type: 'crystal_crawler', count: 5, delay: 500 }],
+    [{ type: 'root_golem', count: 4, delay: 800 }, { type: 'crystal_crawler', count: 5, delay: 500 }, { type: 'emerald_briar', count: 4, delay: 700 }],
   ],
 };

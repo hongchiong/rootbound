@@ -206,11 +206,13 @@ export default class MenuScene extends Phaser.Scene {
       this.tweens.add({ targets: [btnBg, btnText], scaleX: 0.95, scaleY: 0.95, duration: 40, yoyo: true });
       this.cameras.main.fadeOut(400, 0, 0, 0);
       this.time.delayedCall(400, () => {
+        const visualSeed = Date.now() ^ (Math.random() * 0xFFFFFFFF >>> 0);
         this.scene.start('Shop', {
           biomeSequence: buildBiomeSequence(),
           biomeIndex: 0,
           waveInBiome: 0,
           traits: [],
+          visualSeed,
         });
       });
     });

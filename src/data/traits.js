@@ -66,10 +66,10 @@ export const TRAIT_POOL = [
     id: 'garden_roots',
     name: 'Garden Roots',
     category: 'root',
-    description: '+18 Max HP, +1 Armor',
+    description: '+25 Max HP, +1 Armor',
     rarity: 'common',
     biome: 'garden',
-    stats: { maxHp: 18, armor: 1 },
+    stats: { maxHp: 25, armor: 1 },
     visual: { roots: 1 },
   },
 
@@ -428,7 +428,7 @@ export const TRAIT_POOL = [
     category: 'thorn',
     description: 'Cycles through all damage types each hit at 50%',
     rarity: 'legendary',
-    stats: { prismaticCycle: true },
+    stats: { attack: 8, prismaticCycle: true },
     visual: { thorns: 4, color: 0xFF44FF, signature: 'prismatic' },
   },
 
@@ -443,7 +443,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: 'Launch toxic strikes at enemies, 4 dmg/2s',
     rarity: 'common',
-    stats: { sporeDamage: 4, sporeInterval: 2000, sporeStrikeCount: 1 },
+    stats: { sporeDamage: 4, sporeInterval: 2000 },
     visual: { spores: 1 },
   },
   {
@@ -452,7 +452,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: 'Strikes slow enemies 18%, 2 dmg/2s',
     rarity: 'common',
-    stats: { sporeDamage: 2, sporeInterval: 2000, sporeStrikeCount: 1, sporeSlow: 0.18 },
+    stats: { sporeDamage: 2, sporeInterval: 2000, sporeSlow: 0.18 },
     visual: { spores: 1 },
   },
   {
@@ -461,7 +461,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: '+25% spore strike radius',
     rarity: 'common',
-    stats: { sporeRadiusMult: 0.25 },
+    stats: { sporeDamage: 1, sporeInterval: 2500, sporeRadiusMult: 0.25 },
     visual: { spores: 1 },
   },
   {
@@ -470,7 +470,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: '2 dmg/2.5s, enemies hit deal -12% damage',
     rarity: 'common',
-    stats: { sporeDamage: 2, sporeInterval: 2500, sporeStrikeCount: 1, enemyAttackReduce: 0.12 },
+    stats: { sporeDamage: 2, sporeInterval: 2500, enemyAttackReduce: 0.12 },
     visual: { spores: 1, color: 0xFFDD44 },
   },
   {
@@ -480,16 +480,16 @@ export const TRAIT_POOL = [
     description: '3 spore dmg/2s, enemies deal -8% damage',
     rarity: 'common',
     biome: 'underroot',
-    stats: { sporeDamage: 3, sporeInterval: 2000, sporeStrikeCount: 1, enemyDamageReduce: 0.08 },
+    stats: { sporeDamage: 3, sporeInterval: 2000, enemyDamageReduce: 0.08 },
     visual: { spores: 1, color: 0x9966CC },
   },
   {
     id: 'scatter_spores',
     name: 'Scatter Spores',
     category: 'spore',
-    description: '+1 strike/volley, -15% radius',
+    description: '+40% spore radius',
     rarity: 'common',
-    stats: { sporeStrikeCount: 1, sporeRadiusMult: -0.15 },
+    stats: { sporeDamage: 1, sporeInterval: 2500, sporeRadiusMult: 0.40 },
     visual: { spores: 1 },
   },
   {
@@ -498,7 +498,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: '2 dmg/2s, enemies deal -15% damage',
     rarity: 'common',
-    stats: { sporeDamage: 2, sporeInterval: 2000, sporeStrikeCount: 1, enemyDamageReduce: 0.15 },
+    stats: { sporeDamage: 2, sporeInterval: 2000, enemyDamageReduce: 0.15 },
     visual: { spores: 1, color: 0xAAAA88 },
   },
 
@@ -509,7 +509,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: '25% slow, disorient enemies for 1.5s, 3 dmg/2.5s',
     rarity: 'uncommon',
-    stats: { sporeDamage: 3, sporeInterval: 2500, sporeStrikeCount: 1, sporeSlow: 0.25, sporeConfuse: 1500 },
+    stats: { sporeDamage: 3, sporeInterval: 2500, sporeSlow: 0.25, sporeConfuse: 1500 },
     visual: { spores: 2, color: 0xCC66FF },
   },
   {
@@ -519,16 +519,16 @@ export const TRAIT_POOL = [
     description: 'Strikes leave slowing ground zones for 3s, 55% slow',
     rarity: 'uncommon',
     biome: 'underroot',
-    stats: { sporeDamage: 3, sporeInterval: 2500, sporeStrikeCount: 1, sporeSlow: 0.55, sporePersistDuration: 3000 },
+    stats: { sporeDamage: 3, sporeInterval: 2500, sporeSlow: 0.55, sporePersistDuration: 3000 },
     visual: { spores: 2, color: 0xCCAA44 },
   },
   {
     id: 'ember_burst',
     name: 'Ember Burst',
     category: 'spore',
-    description: 'Fire explosive splash 40%',
+    description: 'Fire spore strikes, burn enemies 2/s',
     rarity: 'uncommon',
-    stats: { attack: 5, damageType: 'fire', explosiveSplash: 0.40 },
+    stats: { sporeDamage: 4, sporeInterval: 2500, sporeDamageType: 'fire', sporeBurnDps: 2 },
     visual: { spores: 2, color: 0xFFAA22 },
   },
   {
@@ -537,7 +537,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: 'Reduce enemy armor by 4 for 4s, 2 dmg/2s',
     rarity: 'uncommon',
-    stats: { sporeDamage: 2, sporeInterval: 2000, sporeStrikeCount: 1, sporeArmorReduce: 4 },
+    stats: { sporeDamage: 2, sporeInterval: 2000, sporeArmorReduce: 4 },
     visual: { spores: 2, color: 0xAAFF44 },
   },
   {
@@ -546,7 +546,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: 'Enemy death triggers spore strike at location, 6 dmg',
     rarity: 'uncommon',
-    stats: { sporeDeathPulse: 6, sporeStrikeCount: 1 },
+    stats: { sporeDeathPulse: 6 },
     visual: { spores: 2 },
   },
   {
@@ -556,7 +556,7 @@ export const TRAIT_POOL = [
     description: 'Frost strikes, 30% slow, 4 dmg/2.5s',
     rarity: 'uncommon',
     biome: 'canopy',
-    stats: { sporeDamage: 4, sporeInterval: 2500, sporeStrikeCount: 1, sporeSlow: 0.30, sporeDamageType: 'frost' },
+    stats: { sporeDamage: 4, sporeInterval: 2500, sporeSlow: 0.30, sporeDamageType: 'frost' },
     visual: { spores: 2, color: 0xAADDFF },
   },
   {
@@ -565,7 +565,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: 'Lightning strikes chain to 2 nearby enemies, 3 dmg/2s',
     rarity: 'uncommon',
-    stats: { sporeDamage: 3, sporeInterval: 2000, sporeStrikeCount: 1, sporeChainTargets: 2, sporeDamageType: 'lightning' },
+    stats: { sporeDamage: 3, sporeInterval: 2000, sporeChainTargets: 2, sporeDamageType: 'lightning' },
     visual: { spores: 2, color: 0xFFFF44 },
   },
 
@@ -576,7 +576,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: 'Targeted blast, 12 dmg/3s, +30% radius, -10% enemy damage',
     rarity: 'rare',
-    stats: { sporeDamage: 12, sporeInterval: 3000, sporeStrikeCount: 1, sporeRadiusMult: 0.30, sporeTargetBias: 1.0, enemyDamageReduce: 0.10 },
+    stats: { sporeDamage: 12, sporeInterval: 3000, sporeRadiusMult: 0.30, sporeTargetBias: 1.0, enemyDamageReduce: 0.10 },
     visual: { spores: 3, signature: 'death_cloud' },
   },
   {
@@ -585,16 +585,16 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: 'Poison strikes 3/s, leave toxic ground for 3s, 3 dmg/2s',
     rarity: 'rare',
-    stats: { sporeDamage: 3, sporeInterval: 2000, sporeStrikeCount: 1, sporeDamageType: 'poison', sporePoisonDps: 3, sporePersistDuration: 3000 },
+    stats: { sporeDamage: 3, sporeInterval: 2000, sporeDamageType: 'poison', sporePoisonDps: 3, sporePersistDuration: 3000 },
     visual: { spores: 3, color: 0x88FF44, signature: 'contagion_rings' },
   },
   {
     id: 'wildfire_spores',
     name: 'Wildfire Spores',
     category: 'spore',
-    description: '2 fire strikes/volley, burn 3/s, 4 dmg/2.5s',
+    description: 'Fire strikes, burn 4/s, +25% radius, 5 dmg/2.5s',
     rarity: 'rare',
-    stats: { sporeDamage: 4, sporeInterval: 2500, sporeStrikeCount: 2, sporeDamageType: 'fire', sporeBurnDps: 3 },
+    stats: { sporeDamage: 5, sporeInterval: 2500, sporeRadiusMult: 0.25, sporeDamageType: 'fire', sporeBurnDps: 4 },
     visual: { spores: 3, color: 0xFF6622, signature: 'flame_particles' },
   },
   {
@@ -604,7 +604,7 @@ export const TRAIT_POOL = [
     description: 'Void strikes suppress regen for 4s, -5 armor, 6 dmg/3s',
     rarity: 'rare',
     biome: 'the_rot',
-    stats: { sporeDamage: 6, sporeInterval: 3000, sporeStrikeCount: 1, sporeDamageType: 'void', sporeSuppressRegen: true, sporeArmorReduce: 5 },
+    stats: { sporeDamage: 6, sporeInterval: 3000, sporeDamageType: 'void', sporeSuppressRegen: true, sporeArmorReduce: 5 },
     visual: { spores: 3, color: 0xCC88FF, signature: 'void_mist' },
   },
   {
@@ -613,7 +613,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: 'Pulls nearby enemies toward impact, 20% slow, 4 dmg/2s',
     rarity: 'rare',
-    stats: { sporeDamage: 4, sporeInterval: 2000, sporeStrikeCount: 1, sporePull: 40, sporeRadiusMult: 0.20, sporeSlow: 0.20 },
+    stats: { sporeDamage: 4, sporeInterval: 2000, sporePull: 40, sporeRadiusMult: 0.20, sporeSlow: 0.20 },
     visual: { spores: 3, color: 0x6644CC, signature: 'gravity_distortion' },
   },
 
@@ -622,9 +622,9 @@ export const TRAIT_POOL = [
     id: 'spore_sovereign',
     name: 'Spore Sovereign',
     category: 'spore',
-    description: 'Spore damage x1.5, +2 strikes, applies primary type on-hit, 20% slow',
+    description: 'Spore damage x2.0, applies primary type on-hit, 25% slow, +20% radius',
     rarity: 'legendary',
-    stats: { sporeDamageMult: 0.5, sporeStrikeCount: 2, sporeApplyOnHit: true, sporeSlow: 0.20 },
+    stats: { sporeDamageMult: 1.0, sporeRadiusMult: 0.20, sporeApplyOnHit: true, sporeSlow: 0.25 },
     visual: { spores: 4, color: 0xFF44FF, signature: 'fungal_cap' },
   },
   {
@@ -642,7 +642,7 @@ export const TRAIT_POOL = [
     category: 'spore',
     description: 'Strikes persist as debuff zones for 5s, 2 dmg/s, 30% slow in zone',
     rarity: 'legendary',
-    stats: { sporeDamage: 5, sporeInterval: 2500, sporeStrikeCount: 1, sporePersistDuration: 5000, sporePersistDamage: 2, sporeSlow: 0.30 },
+    stats: { sporeDamage: 5, sporeInterval: 2500, sporePersistDuration: 5000, sporePersistDamage: 2, sporeSlow: 0.30 },
     visual: { spores: 4, color: 0x44CC88, signature: 'miasma_tendrils' },
   },
 
@@ -691,10 +691,10 @@ export const TRAIT_POOL = [
     id: 'garden_bloom',
     name: 'Garden Bloom',
     category: 'bloom',
-    description: '+2 HP Regen, +11 Max HP',
+    description: '+3 HP Regen, +15 Max HP',
     rarity: 'common',
     biome: 'garden',
-    stats: { hpRegen: 2, maxHp: 11 },
+    stats: { hpRegen: 3, maxHp: 15 },
     visual: { blooms: 1 },
   },
   {
@@ -836,9 +836,9 @@ export const TRAIT_POOL = [
     id: 'eternal_bloom',
     name: 'Eternal Bloom',
     category: 'bloom',
-    description: 'Regen x3, cannot die more than once per 3s',
+    description: 'Regen x3, revive once with 75% HP',
     rarity: 'legendary',
-    stats: { regenMultiplier: 2.0, deathCooldown: 3000 },
+    stats: { regenMultiplier: 1.0, phoenixRevive: 0.75 },
     visual: { blooms: 4, color: 0xFFDD88, signature: 'eternal_glow' },
   },
   {
@@ -905,10 +905,10 @@ export const TRAIT_POOL = [
     id: 'garden_vine',
     name: 'Garden Vine',
     category: 'vine',
-    description: '+12% Range, +8% Attack Speed',
+    description: '+15% Range, +15% Attack Speed',
     rarity: 'common',
     biome: 'garden',
-    stats: { rangeMult: 0.12, attackSpeedMult: 0.08 },
+    stats: { rangeMult: 0.15, attackSpeedMult: 0.15 },
     visual: { vines: 1 },
   },
   {
@@ -954,9 +954,9 @@ export const TRAIT_POOL = [
     id: 'grasping_roots',
     name: 'Grasping Roots',
     category: 'vine',
-    description: 'Snare enemies in range (40% slow), +5 Attack',
+    description: 'Snare enemies on hit (40% slow for 1s), +5 Attack',
     rarity: 'uncommon',
-    stats: { attack: 5, sporeSlow: 0.40 },
+    stats: { attack: 5, onHitSlow: 0.40, onHitSlowDuration: 1000 },
     visual: { vines: 1, roots: 1 },
   },
   {
@@ -1092,20 +1092,20 @@ export const RARITY_WEIGHTS = {
   legendary: 5,
 };
 
-// Normal waves: no legendary traits
+// Normal waves: common/uncommon only, rare is a treat
 export const NORMAL_RARITY_WEIGHTS = {
-  common: 50,
-  uncommon: 30,
-  rare: 15,
+  common: 55,
+  uncommon: 35,
+  rare: 10,
   legendary: 0,
 };
 
-// Boss rewards: no common traits, higher rare/legendary
+// Boss rewards: guaranteed upgrade, but legendary is still special
 export const BOSS_RARITY_WEIGHTS = {
   common: 0,
-  uncommon: 25,
-  rare: 50,
-  legendary: 25,
+  uncommon: 40,
+  rare: 52,
+  legendary: 8,
 };
 
 export const CATEGORY_COLORS = {
@@ -1171,15 +1171,15 @@ export const CATEGORY_MUTATIONS = {
     bodyScalePerCount: 0.02,
     bodyWidthBiasPerCount: 0.015,
     barkTextureThreshold: 3,
-    eyeStyles: { 2: 'determined', 5: 'ancient' },
-    leafStyle: null,
+    eyeStyles: { 2: 'determined', 4: 'stoic', 5: 'ancient' },
+    leafStyle: 'thick',
   },
   thorn: {
     bodyAngularityPerCount: 0.08,
     bodyScalePerCount: 0.005,
     bodyRidgesThreshold: 2,
     redGlowThreshold: 5,
-    eyeStyles: { 2: 'sharp', 5: 'fierce' },
+    eyeStyles: { 2: 'sharp', 4: 'menacing', 5: 'fierce' },
     leafStyle: 'serrated',
   },
   bloom: {
@@ -1187,7 +1187,7 @@ export const CATEGORY_MUTATIONS = {
     bodyBrightnessPerCount: 8,
     integratedFlowersThreshold: 3,
     shimmerThreshold: 2,
-    eyeStyles: { 2: 'large', 4: 'expressive' },
+    eyeStyles: { 2: 'large', 3: 'gentle', 4: 'expressive' },
     leafStyle: 'petals',
   },
   spore: {
@@ -1195,15 +1195,15 @@ export const CATEGORY_MUTATIONS = {
     particleDotsThreshold: 2,
     mistThreshold: 2,
     cloudBodyThreshold: 6,
-    eyeStyles: { 2: 'mystical', 5: 'ethereal' },
-    leafStyle: null,
+    eyeStyles: { 2: 'mystical', 4: 'dreamy', 5: 'ethereal' },
+    leafStyle: 'wispy',
   },
   vine: {
     bodyElongationPerCount: 0.02,
     bodyScalePerCount: 0.01,
     windingPatternsThreshold: 3,
     vineArmorThreshold: 5,
-    eyeStyles: { 2: 'keen', 5: 'predatory' },
+    eyeStyles: { 2: 'keen', 4: 'focused', 5: 'predatory' },
     leafStyle: 'tendril',
   },
 };

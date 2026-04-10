@@ -10,6 +10,7 @@ export default class GameOverScene extends Phaser.Scene {
 
   init(data) {
     this.graftedTraits = data.traits || [];
+    this.visualSeed = data.visualSeed || 0;
     this.waveReached = data.waveReached || 1;
     this.killCount = data.killCount || 0;
   }
@@ -66,7 +67,7 @@ export default class GameOverScene extends Phaser.Scene {
     // Seedling — sinking, fading, wilting
     const seedlingY = height * 0.38;
     if (this.graftedTraits.length > 0) {
-      generateSeedlingTexture(this, this.graftedTraits, 'seedling_memorial');
+      generateSeedlingTexture(this, this.graftedTraits, 'seedling_memorial', this.visualSeed);
       this.showFallenSeedling(cx, seedlingY, 'seedling_memorial', 1.8);
     } else {
       this.showFallenSeedling(cx, seedlingY, 'seedling_base', 2);

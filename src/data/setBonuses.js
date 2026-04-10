@@ -39,12 +39,12 @@ export const SET_BONUSES = {
     2: {
       name: 'Spore Cloud',
       description: '+2 Spore damage, -0.3s interval, +10% slow',
-      stats: { sporeDamage: 2, sporeIntervalReduction: 300, sporeSlow: 0.10 },
+      stats: { sporeDamage: 2, sporeInterval: 2500, sporeIntervalReduction: 300, sporeSlow: 0.10 },
     },
     3: {
       name: 'Carpet Bombing',
-      description: '+4 Spore damage, +1 strike/volley, spores slow 15%, -3 armor',
-      stats: { sporeDamage: 4, sporeStrikeCount: 1, sporeSlow: 0.15, sporeArmorReduce: 3 },
+      description: '+6 Spore damage, +25% radius, spores slow 15%, -3 armor',
+      stats: { sporeDamage: 6, sporeRadiusMult: 0.25, sporeSlow: 0.15, sporeArmorReduce: 3 },
     },
     5: {
       name: 'Plague Bearer',

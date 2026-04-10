@@ -10,6 +10,7 @@ export default class VictoryScene extends Phaser.Scene {
 
   init(data) {
     this.graftedTraits = data.traits || [];
+    this.visualSeed = data.visualSeed || 0;
     this.killCount = data.killCount || 0;
     this.wavesCompleted = data.wavesCompleted || 6;
   }
@@ -60,7 +61,7 @@ export default class VictoryScene extends Phaser.Scene {
     // Generate victory seedling at high resolution
     const seedlingY = height * 0.34;
     if (this.graftedTraits.length > 0) {
-      generateVictorySeedlingTexture(this, this.graftedTraits, 'seedling_victory_tex');
+      generateVictorySeedlingTexture(this, this.graftedTraits, 'seedling_victory_tex', this.visualSeed);
     }
 
     // Dramatic seedling reveal — starts small and fades in

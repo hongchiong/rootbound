@@ -29,6 +29,7 @@ export default class CombatScene extends Phaser.Scene {
   init(data) {
     this.audio = this.registry.get('audio');
     this.graftedTraits = data.traits || [];
+    this.visualSeed = data.visualSeed || 0;
     this.seedlingName = data.seedlingName || null;
     // Biome state
     this.biomeSequence = data.biomeSequence || ['garden'];
@@ -50,6 +51,7 @@ export default class CombatScene extends Phaser.Scene {
     this.enemies = [];
     this.projectiles = [];
     this.enemyProjectiles = [];
+    this.groundHazards = [];
     this.spawnQueue = [];
     this.waveComplete = false;
     this.isPaused = false;
@@ -464,6 +466,7 @@ export default class CombatScene extends Phaser.Scene {
       prismaticIndex: 0,
       secondWindUsed: false,
       phoenixUsed: false,
+      phoenixInvulnTimer: 0,
       nuclearBloomTimer: 0,
       overgrowthTimer: 0,
       overgrowthActive: false,
@@ -483,7 +486,7 @@ export default class CombatScene extends Phaser.Scene {
     this.playerStatusIcons = [];
 
     if (this.graftedTraits.length > 0) {
-      generateSeedlingTexture(this, this.graftedTraits, 'seedling_current');
+      generateSeedlingTexture(this, this.graftedTraits, 'seedling_current', this.visualSeed);
       this.seedling = this.add.image(width / 2, height / 2 + 20, 'seedling_current').setScale(1.3).setDepth(5);
     } else {
       this.seedling = this.add.image(width / 2, height / 2 + 20, 'seedling_base').setScale(1.4).setDepth(5);
@@ -600,7 +603,7 @@ export default class CombatScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(10);
 
     // Enemies remaining
-    this.enemyCountText = this.add.text(width - 20, 15, '', {
+    this.enemyCountText = this.add.text(width - 20, 48, '', {
       fontFamily: 'monospace', fontSize: '12px', color: '#CC9988',
     }).setOrigin(1, 0).setDepth(10);
 
@@ -633,6 +636,15 @@ export default class CombatScene extends Phaser.Scene {
   }
 
   startWave() {
+    // Clean up ground hazards from previous wave
+    if (this.groundHazards) {
+      for (const hazard of this.groundHazards) {
+        if (hazard.sprite?.active) hazard.sprite.destroy();
+        if (hazard.border?.active) hazard.border.destroy();
+      }
+      this.groundHazards = [];
+    }
+
     const waveData = getBiomeWave(this.currentBiomeId, this.waveInBiome);
     this.totalEnemies = 0;
     this.spawnQueue = [];
@@ -770,6 +782,12 @@ export default class CombatScene extends Phaser.Scene {
       case 3: x = width - 25; y = Phaser.Math.Between(65, height - 25); break;
     }
 
+    // Bosses that anchor to center-top of arena
+    if (isBoss && data.bossMovement === 'stationary' && data.stationaryConfig?.anchorToCenter) {
+      x = this.arenaBounds.centerX;
+      y = this.arenaBounds.y + 60;
+    }
+
     // Resolve texture key
     let texKey;
     if (isBoss) {
@@ -848,6 +866,22 @@ export default class CombatScene extends Phaser.Scene {
       abilityTelegraphs: [],
       buffTimers: {},
       baseArmor: data.armor || 0,
+      baseRegen: data.regen || 0,
+      // Breakable ability state
+      breakBar: null,  // { abilityId, hpRemaining, hpMax, barBg, barFill, barText, label }
+      // Boss movement state
+      bossMovement: isBoss ? (data.bossMovement || null) : null,
+      bossMovementState: null,
+      bossMovementTimer: 0,
+      orbitAngle: 0,
+      orbitDirection: 1,
+      stalkerConfig: data.stalkerConfig || null,
+      stationaryConfig: data.stationaryConfig || null,
+      ancientOakConfig: data.ancientOakConfig || null,
+      teleporterConfig: data.teleporterConfig || null,
+      orbiterConfig: data.orbiterConfig || null,
+      diverConfig: data.diverConfig || null,
+      phaseshiftConfig: data.phaseshiftConfig || null,
     };
 
     this.enemies.push(enemy);
@@ -950,6 +984,11 @@ export default class CombatScene extends Phaser.Scene {
 
     const dt = delta / 1000;
 
+    // Phoenix revive invulnerability timer
+    if (this.combatState.phoenixInvulnTimer > 0) {
+      this.combatState.phoenixInvulnTimer -= dt;
+    }
+
     // HP bar
     const hpPercent = Math.max(0, this.seedlingStats.hp / this.seedlingStats.maxHp);
     const barW = this.hpBarWidth;
@@ -1029,6 +1068,10 @@ export default class CombatScene extends Phaser.Scene {
       if (lf && this.seedlingStats.hp / this.seedlingStats.maxHp >= (lf.livingFortressThreshold || 0.75)) {
         regen *= 2;
       }
+      // Boss regen double (Root of the Ancients)
+      if (this.seedlingStats.bossRegenDouble && this.waveInBiome === 3) {
+        regen *= 2;
+      }
       // Wither debuff reduces regen
       if (this.playerDebuffs.wither.timer > 0) {
         regen *= (1 - this.playerDebuffs.wither.regenReduce);
@@ -1069,7 +1112,7 @@ export default class CombatScene extends Phaser.Scene {
               const newSlow = 1 - zone.slow;
               if (newSlow < enemy.slowFactor) {
                 enemy.slowFactor = newSlow;
-                enemy.slowTimer = 1500;
+                enemy.slowTimer = enemy.isBoss ? 400 : 800;
               }
             }
             if (zone.poisonDps && !enemy.poisonImmune) {
@@ -1106,6 +1149,7 @@ export default class CombatScene extends Phaser.Scene {
     // Update projectiles
     this.updateProjectiles(time, dt);
     this.updateEnemyProjectiles(time, dt);
+    this.updateGroundHazards(dt);
 
     // Enemy count
     this.enemyCountText.setText(`Enemies: ${this.remainingEnemies}`);
@@ -1294,12 +1338,19 @@ export default class CombatScene extends Phaser.Scene {
     if (this.seedlingStats.hp <= 0) {
       if (this.seedlingStats.phoenixRevive && !this.combatState.phoenixUsed) {
         this.combatState.phoenixUsed = true;
+        this.combatState.phoenixInvulnTimer = 1.0; // 1s invulnerability after revive
         this.seedlingStats.hp = Math.floor(this.seedlingStats.maxHp * this.seedlingStats.phoenixRevive);
         this.showDamageNumber(this.seedling.x, this.seedling.y - 55, 'PHOENIX REVIVE!', '#FFDD44', '16px');
         const phRing = this.add.circle(this.seedling.x, this.seedling.y, 10, 0xFFDD44, 0.6).setDepth(7);
         this.tweens.add({ targets: phRing, scale: 8, alpha: 0, duration: 600, onComplete: () => phRing.destroy() });
         this.shakeCamera(5, 200);
         this.spawnParticle(this.seedling.x, this.seedling.y, 'particle_heal', 0xFFDD44, 10);
+        // Flash seedling to show invulnerability
+        this.tweens.add({
+          targets: this.seedling, alpha: 0.3, duration: 100,
+          yoyo: true, repeat: 4,
+        });
+        return; // Exit update early — don't let remaining damage sources kill us this frame
       } else {
         this.onPlayerDeath();
       }
@@ -1327,7 +1378,13 @@ export default class CombatScene extends Phaser.Scene {
     // Bleed tick
     if (enemy.bleedTimer > 0) {
       enemy.bleedTimer -= dt * 1000;
-      enemy.hp -= enemy.bleedDps * dt;
+      let bleedDmg = enemy.bleedDps * dt;
+      // Rot Essence: bleed scales with target missing HP (up to 2x at 0 HP)
+      if (this.seedlingStats.bleedMissingHpScale) {
+        const missingRatio = 1 - (enemy.hp / enemy.maxHp);
+        bleedDmg *= (1 + missingRatio);
+      }
+      enemy.hp -= bleedDmg;
       if (Math.random() < 0.08) {
         this.spawnParticle(enemy.sprite.x, enemy.sprite.y, 'particle_hit', 0xFF4444, 1);
       }
@@ -1430,6 +1487,25 @@ export default class CombatScene extends Phaser.Scene {
               const { type: mType, count: mCount } = phases[p].spawnMinion;
               this.spawnMinions(mType, mCount, enemy.sprite.x, enemy.sprite.y);
             }
+            // Movement change — switch boss movement pattern mid-fight
+            if (phases[p].movementChange) {
+              enemy.bossMovement = phases[p].movementChange;
+              enemy.bossMovementState = null;
+              enemy.bossMovementTimer = 0;
+            }
+            // Arena hazards — spawn damage zones on phase transition
+            if (phases[p].arenaHazards) {
+              const bounds = this.arenaBounds;
+              for (const h of phases[p].arenaHazards) {
+                const hx = Phaser.Math.Between(bounds.x + 50, bounds.right - 50);
+                const hy = Phaser.Math.Between(bounds.y + 50, bounds.bottom - 50);
+                this.spawnArenaHazard(hx, hy, h.radius, h.dps, h.duration, h.color);
+              }
+            }
+            // Phase announcement text
+            if (phases[p].announcement) {
+              this.showPhaseAnnouncement(phases[p].announcement, enemy.data.color || 0xFF0044);
+            }
             break;
           }
         }
@@ -1456,6 +1532,11 @@ export default class CombatScene extends Phaser.Scene {
         this.updateBossAbilities(enemy, time, dt, dist);
       }
 
+      // Update break bar position to follow boss
+      if (enemy.isBoss && enemy.breakBar) {
+        this.updateBreakBarPosition(enemy);
+      }
+
       // Buff timer updates
       for (const stat in enemy.buffTimers) {
         if (enemy.buffTimers[stat] > 0) {
@@ -1476,6 +1557,8 @@ export default class CombatScene extends Phaser.Scene {
         if (Math.random() < 0.05) {
           this.spawnParticle(enemy.sprite.x, enemy.sprite.y, 'spore_particle', 0xCC66FF, 1);
         }
+      } else if (enemy.isBoss && enemy.bossMovement) {
+        this.updateBossMovement(enemy, time, dt, dx, dy, dist);
       } else {
         const behavior = enemy.behavior || 'melee';
         switch (behavior) {
@@ -1491,6 +1574,15 @@ export default class CombatScene extends Phaser.Scene {
           case 'summoner':
             this.updateSummonerBehavior(enemy, time, dt, dx, dy, dist);
             break;
+          case 'charger':
+            this.updateChargerBehavior(enemy, time, dt, dx, dy, dist);
+            break;
+          case 'artillery':
+            this.updateArtilleryBehavior(enemy, time, dt, dx, dy, dist);
+            break;
+          case 'burrower':
+            this.updateBurrowerBehavior(enemy, time, dt, dx, dy, dist);
+            break;
           default:
             this.updateMeleeBehavior(enemy, time, dt, dx, dy, dist);
             break;
@@ -1498,8 +1590,8 @@ export default class CombatScene extends Phaser.Scene {
       }
     }
 
-    // Knockback mechanic (flying enemies immune) — push enemies away to keep them in damage zones longer
-    if (!enemy.flying && this.seedlingStats.knockbackStrength && dist < this.seedlingStats.effectiveRange * 1.5) {
+    // Knockback mechanic (flying enemies immune, stationary bosses immune) — push enemies away to keep them in damage zones longer
+    if (!enemy.flying && enemy.bossMovement !== 'stationary' && this.seedlingStats.knockbackStrength && dist < this.seedlingStats.effectiveRange * 1.5) {
       const resistFactor = enemy.isBoss ? 0.25 : 1.0; // Bosses resist 75% of continuous knockback
       const push = this.seedlingStats.knockbackStrength * dt * resistFactor;
       enemy.sprite.x -= (dx / dist) * push;
@@ -1725,8 +1817,6 @@ export default class CombatScene extends Phaser.Scene {
   }
 
   updateDebufferBehavior(enemy, time, dt, dx, dy, dist) {
-    const preferred = enemy.data.preferredRange || 60;
-
     if (enemy.retreating && enemy.retreatTimer > 0) {
       // Retreating after applying debuff
       this.moveEnemyAway(enemy, dx, dy, dist, dt, 0.8);
@@ -1793,9 +1883,803 @@ export default class CombatScene extends Phaser.Scene {
     }
   }
 
+  // ── Charger: telegraphs a direction, dashes in a line, stunned after ──
+  updateChargerBehavior(enemy, time, dt, dx, dy, dist) {
+    if (!enemy.chargerState) {
+      enemy.chargerState = 'stalking';
+      enemy.chargerTimer = 0;
+      enemy.chargeDirX = 0;
+      enemy.chargeDirY = 0;
+      enemy.chargeIndicator = null;
+      enemy.nextChargeCooldown = (enemy.data.chargeCooldown || 4000) + Math.random() * 1000;
+    }
+
+    enemy.chargerTimer += dt * 1000;
+
+    switch (enemy.chargerState) {
+      case 'stalking': {
+        // Approach to medium range, then begin charge
+        const approachRange = enemy.data.preferredRange || 120;
+        if (dist > approachRange) {
+          this.moveEnemyToward(enemy, dx, dy, dist, dt);
+        } else if (dist < approachRange * 0.4) {
+          this.moveEnemyAway(enemy, dx, dy, dist, dt, 0.5);
+        }
+        // Melee fallback
+        if (dist <= enemy.data.attackRange) {
+          this.performEnemyMeleeAttack(enemy, time, dist);
+        }
+        if (enemy.chargerTimer > enemy.nextChargeCooldown) {
+          enemy.chargerState = 'winding_up';
+          enemy.chargerTimer = 0;
+          // Lock charge direction toward player
+          enemy.chargeDirX = dx / (dist || 1);
+          enemy.chargeDirY = dy / (dist || 1);
+          // Telegraph: draw a line showing charge path
+          const lineLen = 200;
+          enemy.chargeIndicator = this.add.graphics().setDepth(3);
+          enemy.chargeIndicator.lineStyle(3, 0xFF4444, 0.4);
+          enemy.chargeIndicator.lineBetween(
+            enemy.sprite.x, enemy.sprite.y,
+            enemy.sprite.x + enemy.chargeDirX * lineLen,
+            enemy.sprite.y + enemy.chargeDirY * lineLen
+          );
+        }
+        break;
+      }
+      case 'winding_up': {
+        // Stand still and pulse — telegraph the incoming charge
+        const windUpDuration = enemy.data.chargeWindUp || 800;
+        enemy.sprite.setAlpha(0.5 + 0.5 * Math.sin(enemy.chargerTimer * 0.015));
+        // Update telegraph line position
+        if (enemy.chargeIndicator) {
+          enemy.chargeIndicator.clear();
+          const alpha = 0.3 + 0.4 * (enemy.chargerTimer / windUpDuration);
+          enemy.chargeIndicator.lineStyle(3 + 2 * (enemy.chargerTimer / windUpDuration), 0xFF4444, alpha);
+          const lineLen = 200;
+          enemy.chargeIndicator.lineBetween(
+            enemy.sprite.x, enemy.sprite.y,
+            enemy.sprite.x + enemy.chargeDirX * lineLen,
+            enemy.sprite.y + enemy.chargeDirY * lineLen
+          );
+        }
+        if (enemy.chargerTimer > windUpDuration) {
+          enemy.chargerState = 'charging';
+          enemy.chargerTimer = 0;
+          enemy.sprite.setAlpha(1);
+          if (enemy.chargeIndicator) { enemy.chargeIndicator.destroy(); enemy.chargeIndicator = null; }
+        }
+        break;
+      }
+      case 'charging': {
+        // Dash quickly in locked direction
+        const chargeSpeed = (enemy.data.chargeSpeed || enemy.speed * 4) * enemy.slowFactor;
+        enemy.sprite.x += enemy.chargeDirX * chargeSpeed * dt;
+        enemy.sprite.y += enemy.chargeDirY * chargeSpeed * dt;
+        this.clampEnemyPosition(enemy);
+        // Trail particles
+        if (Math.random() < 0.4) {
+          this.spawnParticle(enemy.sprite.x, enemy.sprite.y, 'particle_hit', enemy.data.color || 0xFF4444, 2);
+        }
+        // Check if hit player during charge
+        const hitDist = Math.sqrt(
+          (this.seedling.x - enemy.sprite.x) ** 2 +
+          (this.seedling.y - enemy.sprite.y) ** 2
+        );
+        if (hitDist < enemy.data.attackRange * 1.5 && time - enemy.lastAttackTime > 500) {
+          // Charge hit does 1.5x damage
+          enemy.data.attack *= 1.5;
+          this.performEnemyMeleeAttack(enemy, time, hitDist);
+          enemy.data.attack /= 1.5;
+          enemy.chargerState = 'stunned';
+          enemy.chargerTimer = 0;
+          this.shakeCamera(3, 80);
+          break;
+        }
+        // End charge after distance traveled or timeout
+        if (enemy.chargerTimer > 600) {
+          enemy.chargerState = 'stunned';
+          enemy.chargerTimer = 0;
+        }
+        break;
+      }
+      case 'stunned': {
+        // Vulnerability window — enemy is dazed after charge
+        const stunDuration = enemy.data.chargeStunDuration || 1200;
+        enemy.sprite.setAlpha(0.6 + 0.2 * Math.sin(enemy.chargerTimer * 0.01));
+        if (Math.random() < 0.03) {
+          this.spawnParticle(enemy.sprite.x, enemy.sprite.y - 10, 'particle_hit', 0xFFFF44, 1);
+        }
+        if (enemy.chargerTimer > stunDuration) {
+          enemy.chargerState = 'stalking';
+          enemy.chargerTimer = 0;
+          enemy.sprite.setAlpha(1);
+          enemy.nextChargeCooldown = (enemy.data.chargeCooldown || 4000) + Math.random() * 1000;
+        }
+        break;
+      }
+    }
+  }
+
+  // ── Artillery: stays far away, lobs slow projectiles that create ground hazards ──
+  updateArtilleryBehavior(enemy, time, dt, dx, dy, dist) {
+    const preferred = enemy.data.preferredRange || 200;
+
+    // Maintain maximum distance
+    if (dist < preferred * 0.6) {
+      this.moveEnemyAway(enemy, dx, dy, dist, dt, 1.0);
+    } else if (dist > preferred * 1.3) {
+      this.moveEnemyToward(enemy, dx, dy, dist, dt, 0.5);
+    } else {
+      // Strafe sideways at preferred range
+      if (!enemy.strafeDir) enemy.strafeDir = Math.random() < 0.5 ? 1 : -1;
+      if (!enemy.strafeSwitchTimer) enemy.strafeSwitchTimer = 0;
+      enemy.strafeSwitchTimer += dt * 1000;
+      if (enemy.strafeSwitchTimer > 3000) {
+        enemy.strafeDir *= -1;
+        enemy.strafeSwitchTimer = 0;
+      }
+      const perpX = -dy / (dist || 1);
+      const perpY = dx / (dist || 1);
+      const speed = enemy.speed * enemy.slowFactor * 0.7 * dt;
+      enemy.sprite.x += perpX * speed * enemy.strafeDir;
+      enemy.sprite.y += perpY * speed * enemy.strafeDir;
+      this.clampEnemyPosition(enemy);
+    }
+
+    // Fire artillery projectile on cooldown — aimed at player's predicted position
+    if (time - enemy.lastAttackTime > enemy.data.attackSpeed) {
+      this.fireArtilleryProjectile(enemy);
+      enemy.lastAttackTime = time;
+      this.tweens.add({ targets: enemy.sprite, scaleY: 0.7, scaleX: 1.2, duration: 100, yoyo: true });
+    }
+
+    // Weak melee fallback
+    if (dist <= enemy.data.attackRange * 0.3) {
+      this.performEnemyMeleeAttack(enemy, time, dist);
+    }
+  }
+
+  fireArtilleryProjectile(enemy) {
+    const proj = enemy.data.projectile;
+    if (!proj) return;
+    const sx = this.seedling.x;
+    const sy = this.seedling.y;
+    // Aim at where the player will be (slight prediction offset)
+    const offsetX = (Math.random() - 0.5) * 25;
+    const offsetY = (Math.random() - 0.5) * 25;
+    const targetX = sx + offsetX;
+    const targetY = sy + offsetY;
+    const dx = targetX - enemy.sprite.x;
+    const dy = targetY - enemy.sprite.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const speed = (proj.speed || 120) * 0.6; // Artillery is slower
+    const artProj = {
+      sprite: this.add.circle(enemy.sprite.x, enemy.sprite.y, 6, proj.color || 0xFF6644, 0.9).setDepth(5),
+      vx: (dx / dist) * speed,
+      vy: (dy / dist) * speed,
+      damage: Math.floor(enemy.data.attack * (proj.damageMult || 0.8)),
+      damageType: proj.damageType || 'normal',
+      targetX,
+      targetY,
+      lifetime: 0,
+      lastTrailTime: 0,
+      isArtillery: true,
+      artilleryRadius: enemy.data.artilleryRadius || 55,
+      debuff: enemy.data.debuff,
+      hazardDuration: enemy.data.hazardDuration || 3000,
+      hazardDps: enemy.data.hazardDps || 0,
+      hazardColor: proj.color || 0xFF6644,
+    };
+    // Growing size effect as it travels
+    this.tweens.add({ targets: artProj.sprite, scale: 2.0, duration: 1500 });
+    this.enemyProjectiles.push(artProj);
+  }
+
+  // ── Burrower: digs underground, erupts near player with AoE ──
+  updateBurrowerBehavior(enemy, time, dt, dx, dy, dist) {
+    if (!enemy.burrowState) {
+      enemy.burrowState = 'surface';
+      enemy.burrowTimer = 0;
+      enemy.burrowCooldown = (enemy.data.burrowCooldown || 5000) + Math.random() * 1500;
+      enemy.eruptIndicator = null;
+    }
+
+    enemy.burrowTimer += dt * 1000;
+
+    switch (enemy.burrowState) {
+      case 'surface': {
+        // Normal melee approach when above ground
+        if (dist > enemy.data.attackRange) {
+          this.moveEnemyToward(enemy, dx, dy, dist, dt);
+        } else {
+          this.performEnemyMeleeAttack(enemy, time, dist);
+        }
+        // Burrow when cooldown expires and not too close
+        if (enemy.burrowTimer > enemy.burrowCooldown && dist > 60) {
+          enemy.burrowState = 'burrowing';
+          enemy.burrowTimer = 0;
+          // Digging animation
+          this.tweens.add({ targets: enemy.sprite, scaleY: 0.1, alpha: 0.3, duration: 400 });
+          this.spawnParticle(enemy.sprite.x, enemy.sprite.y, 'particle_hit', 0x886644, 6);
+        }
+        break;
+      }
+      case 'burrowing': {
+        // Brief invulnerability while digging
+        enemy.invulnerable = true;
+        if (enemy.burrowTimer > 500) {
+          enemy.burrowState = 'underground';
+          enemy.burrowTimer = 0;
+          enemy.sprite.setAlpha(0);
+          enemy.sprite.setScale(0.1);
+          // Pick eruption point near player
+          const angle = Math.random() * Math.PI * 2;
+          const eruptDist = 30 + Math.random() * 40;
+          enemy.eruptX = Phaser.Math.Clamp(
+            this.seedling.x + Math.cos(angle) * eruptDist,
+            this.arenaBounds.x + 20, this.arenaBounds.right - 20
+          );
+          enemy.eruptY = Phaser.Math.Clamp(
+            this.seedling.y + Math.sin(angle) * eruptDist,
+            this.arenaBounds.y + 20, this.arenaBounds.bottom - 20
+          );
+        }
+        break;
+      }
+      case 'underground': {
+        // Move underground toward eruption point
+        enemy.sprite.x += (enemy.eruptX - enemy.sprite.x) * 0.08;
+        enemy.sprite.y += (enemy.eruptY - enemy.sprite.y) * 0.08;
+        // Rumble particles at destination
+        if (enemy.burrowTimer > 400 && Math.random() < 0.15) {
+          this.spawnParticle(enemy.eruptX + (Math.random() - 0.5) * 20, enemy.eruptY, 'particle_hit', 0x886644, 1);
+        }
+        // Telegraph circle at eruption point
+        if (enemy.burrowTimer > 400 && !enemy.eruptIndicator) {
+          const radius = enemy.data.eruptRadius || 50;
+          enemy.eruptIndicator = this.add.circle(enemy.eruptX, enemy.eruptY, radius, 0xFF4444, 0.15).setDepth(3);
+          this.tweens.add({ targets: enemy.eruptIndicator, alpha: 0.4, duration: 600 });
+        }
+        if (enemy.burrowTimer > 1000) {
+          enemy.burrowState = 'erupting';
+          enemy.burrowTimer = 0;
+        }
+        break;
+      }
+      case 'erupting': {
+        // Snap to eruption position and deal AoE damage
+        enemy.sprite.x = enemy.eruptX;
+        enemy.sprite.y = enemy.eruptY;
+        enemy.invulnerable = false;
+        enemy.sprite.setAlpha(1);
+        this.tweens.add({ targets: enemy.sprite, scaleX: 1.3, scaleY: 1.3, duration: 150, yoyo: true,
+          onComplete: () => { if (enemy.sprite?.active) enemy.sprite.setScale(1); }
+        });
+        // Remove telegraph
+        if (enemy.eruptIndicator) { enemy.eruptIndicator.destroy(); enemy.eruptIndicator = null; }
+        // AoE damage around eruption
+        const eruptRadius = enemy.data.eruptRadius || 50;
+        const eruptDmg = Math.floor(enemy.data.attack * 1.2);
+        const playerDist = Math.sqrt(
+          (this.seedling.x - enemy.eruptX) ** 2 +
+          (this.seedling.y - enemy.eruptY) ** 2
+        );
+        if (playerDist <= eruptRadius && !this.isPlayerInvulnerable()) {
+          // Apply eruption damage to player
+          let effectiveArmor = this.seedlingStats.armor || 0;
+          if (this.playerDebuffs.corrode.timer > 0) {
+            effectiveArmor = Math.max(0, effectiveArmor * (1 - this.playerDebuffs.corrode.armorReduce));
+          }
+          const dmg = Math.max(1, eruptDmg - effectiveArmor);
+          this.seedlingStats.hp -= dmg;
+          this.showDamageNumber(this.seedling.x, this.seedling.y - 25, dmg, '#FF6644', '14px');
+          this.shakeCamera(4, 100);
+        }
+        // Visual burst
+        const ring = this.add.circle(enemy.eruptX, enemy.eruptY, 10, 0xFF6644, 0.5).setDepth(6);
+        this.tweens.add({ targets: ring, scale: eruptRadius / 10, alpha: 0, duration: 300, onComplete: () => ring.destroy() });
+        this.spawnParticle(enemy.eruptX, enemy.eruptY, 'particle_hit', 0xFF6644, 8);
+        enemy.burrowState = 'surface';
+        enemy.burrowTimer = 0;
+        enemy.burrowCooldown = (enemy.data.burrowCooldown || 5000) + Math.random() * 1500;
+        break;
+      }
+    }
+  }
+
+  // ── Boss Movement System ─────────────────────────────────────────
+
+  updateBossMovement(enemy, time, dt, dx, dy, dist) {
+    switch (enemy.bossMovement) {
+      case 'stalker':     this.updateBossStalker(enemy, time, dt, dx, dy, dist); break;
+      case 'stationary':  this.updateBossStationary(enemy, time, dt, dx, dy, dist); break;
+      case 'ancient_oak': this.updateBossAncientOak(enemy, time, dt, dx, dy, dist); break;
+      case 'teleporter':  this.updateBossTeleporter(enemy, time, dt, dx, dy, dist); break;
+      case 'orbiter':    this.updateBossOrbiter(enemy, time, dt, dx, dy, dist); break;
+      case 'diver':      this.updateBossDiver(enemy, time, dt, dx, dy, dist); break;
+      case 'phaseshift':  this.updateBossPhaseshift(enemy, time, dt, dx, dy, dist); break;
+      default:           this.updateMeleeBehavior(enemy, time, dt, dx, dy, dist); break;
+    }
+  }
+
+  // Garden Golem: slow approach with periodic brace → lunge pattern
+  updateBossStalker(enemy, time, dt, dx, dy, dist) {
+    const cfg = enemy.stalkerConfig || {};
+    if (!enemy.bossMovementState) {
+      enemy.bossMovementState = 'approaching';
+      enemy.bossMovementTimer = 0;
+    }
+    enemy.bossMovementTimer += dt * 1000;
+
+    switch (enemy.bossMovementState) {
+      case 'approaching': {
+        this.moveEnemyToward(enemy, dx, dy, dist, dt);
+        if (dist <= enemy.data.attackRange) {
+          this.performEnemyMeleeAttack(enemy, time, dist);
+        }
+        if (enemy.bossMovementTimer > (cfg.braceInterval || 4000)) {
+          enemy.bossMovementState = 'bracing';
+          enemy.bossMovementTimer = 0;
+          // Temp armor boost
+          enemy.armor += (cfg.braceArmorBonus || 5);
+          // Visual: pulsing glow
+          this.tweens.add({
+            targets: enemy.sprite, alpha: 0.5, duration: 150, yoyo: true,
+            repeat: Math.floor((cfg.braceDuration || 1200) / 300) - 1,
+          });
+          // Dust particles
+          for (let i = 0; i < 4; i++) {
+            this.spawnParticle(
+              enemy.sprite.x + (Math.random() - 0.5) * 30,
+              enemy.sprite.y + 10,
+              'particle_hit', 0x886644, 1
+            );
+          }
+        }
+        break;
+      }
+      case 'bracing': {
+        // Stopped — bracing stance
+        if (dist <= enemy.data.attackRange) {
+          this.performEnemyMeleeAttack(enemy, time, dist);
+        }
+        if (enemy.bossMovementTimer > (cfg.braceDuration || 1200)) {
+          // Remove temp armor
+          enemy.armor = Math.max(enemy.baseArmor, enemy.armor - (cfg.braceArmorBonus || 5));
+          // Lunge toward player
+          enemy.bossMovementState = 'lunging';
+          enemy.bossMovementTimer = 0;
+          enemy.lungeDirX = dx / (dist || 1);
+          enemy.lungeDirY = dy / (dist || 1);
+          enemy.lungeDistTraveled = 0;
+        }
+        break;
+      }
+      case 'lunging': {
+        const lungeSpeed = (cfg.lungeSpeed || 180) * enemy.slowFactor * dt;
+        enemy.sprite.x += enemy.lungeDirX * lungeSpeed;
+        enemy.sprite.y += enemy.lungeDirY * lungeSpeed;
+        enemy.lungeDistTraveled += lungeSpeed;
+        this.clampEnemyPosition(enemy);
+        // Dust trail
+        if (Math.random() < 0.3) {
+          this.spawnParticle(enemy.sprite.x, enemy.sprite.y + 8, 'particle_hit', 0x886644, 1);
+        }
+        // Hit player during lunge
+        if (dist <= enemy.data.attackRange * 1.3) {
+          this.performEnemyMeleeAttack(enemy, time, dist);
+        }
+        if (enemy.lungeDistTraveled >= (cfg.lungeDistance || 80) || enemy.bossMovementTimer > 600) {
+          enemy.bossMovementState = 'approaching';
+          enemy.bossMovementTimer = 0;
+        }
+        break;
+      }
+    }
+  }
+
+  // Ancient Oak: stays rooted in place, relies on abilities
+  updateBossStationary(enemy, time, dt, dx, dy, dist) {
+    // Does not move — stays anchored
+    // Only attacks if player gets in melee range
+    if (dist <= enemy.data.attackRange) {
+      this.performEnemyMeleeAttack(enemy, time, dist);
+    }
+    // Visual: pulsing root lines radiating outward
+    if (!enemy._rootVisualTimer) enemy._rootVisualTimer = 0;
+    enemy._rootVisualTimer += dt * 1000;
+    if (enemy._rootVisualTimer > 2000) {
+      enemy._rootVisualTimer = 0;
+      const count = 3 + enemy.currentPhase;
+      for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 / count) * i + Math.random() * 0.3;
+        const len = 40 + Math.random() * 30;
+        const ex = enemy.sprite.x + Math.cos(angle) * len;
+        const ey = enemy.sprite.y + Math.sin(angle) * len;
+        const line = this.add.graphics().setDepth(2);
+        line.lineStyle(2, 0x2A5020, 0.4);
+        line.beginPath();
+        line.moveTo(enemy.sprite.x, enemy.sprite.y);
+        line.lineTo(ex, ey);
+        line.strokePath();
+        this.tweens.add({ targets: line, alpha: 0, duration: 1500, onComplete: () => line.destroy() });
+      }
+    }
+  }
+
+  // Ancient Oak: slow pursuer that roots down to cast, then slams on unroot
+  updateBossAncientOak(enemy, time, dt, dx, dy, dist) {
+    const cfg = enemy.ancientOakConfig || enemy.data.ancientOakConfig || {};
+    if (!enemy.bossMovementState) {
+      enemy.bossMovementState = 'pursuing';
+      enemy.bossMovementTimer = 0;
+      enemy._rootVisualTimer = 0;
+    }
+    enemy.bossMovementTimer += dt * 1000;
+
+    switch (enemy.bossMovementState) {
+      case 'pursuing': {
+        // Slow, lumbering walk toward the player
+        this.moveEnemyToward(enemy, dx, dy, dist, dt, 0.6);
+        if (dist <= enemy.data.attackRange) {
+          this.performEnemyMeleeAttack(enemy, time, dist);
+        }
+        // Root visual: periodic ground cracks while walking
+        enemy._rootVisualTimer += dt * 1000;
+        if (enemy._rootVisualTimer > 1500) {
+          enemy._rootVisualTimer = 0;
+          for (let i = 0; i < 2; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const len = 20 + Math.random() * 20;
+            const ex = enemy.sprite.x + Math.cos(angle) * len;
+            const ey = enemy.sprite.y + Math.sin(angle) * len;
+            const line = this.add.graphics().setDepth(2);
+            line.lineStyle(2, 0x2A5020, 0.3);
+            line.beginPath();
+            line.moveTo(enemy.sprite.x, enemy.sprite.y);
+            line.lineTo(ex, ey);
+            line.strokePath();
+            this.tweens.add({ targets: line, alpha: 0, duration: 1000, onComplete: () => line.destroy() });
+          }
+        }
+        // After cooldown, root down
+        const rootCD = (cfg.rootCooldown || 5000) * (enemy.currentPhase >= 2 ? 0.7 : 1);
+        if (enemy.bossMovementTimer > rootCD) {
+          enemy.bossMovementState = 'rooting';
+          enemy.bossMovementTimer = 0;
+          enemy.armor += (cfg.rootArmorBonus || 5);
+          // Visual: roots burst from ground
+          const rootCount = 4 + enemy.currentPhase * 2;
+          for (let i = 0; i < rootCount; i++) {
+            const angle = (Math.PI * 2 / rootCount) * i + Math.random() * 0.3;
+            const len = 30 + Math.random() * 40;
+            const ex = enemy.sprite.x + Math.cos(angle) * len;
+            const ey = enemy.sprite.y + Math.sin(angle) * len;
+            const line = this.add.graphics().setDepth(2);
+            line.lineStyle(3, 0x2A5020, 0.6);
+            line.beginPath();
+            line.moveTo(enemy.sprite.x, enemy.sprite.y);
+            line.lineTo(ex, ey);
+            line.strokePath();
+            this.tweens.add({ targets: line, alpha: 0, duration: cfg.rootDuration || 2000, onComplete: () => line.destroy() });
+          }
+          // Tint darker while rooted
+          enemy.sprite.setTint(0x1a3a10);
+        }
+        break;
+      }
+      case 'rooting': {
+        // Stationary while rooted — still attacks in melee range
+        if (dist <= enemy.data.attackRange) {
+          this.performEnemyMeleeAttack(enemy, time, dist);
+        }
+        const rootDur = (cfg.rootDuration || 2000) * (enemy.currentPhase >= 2 ? 0.75 : 1);
+        if (enemy.bossMovementTimer > rootDur) {
+          // Unroot slam — AoE damage to nearby player
+          enemy.armor = Math.max(enemy.baseArmor, enemy.armor - (cfg.rootArmorBonus || 5));
+          enemy.sprite.clearTint();
+          enemy.bossMovementState = 'pursuing';
+          enemy.bossMovementTimer = 0;
+          // Trample/slam AoE on unroot
+          const trampleRange = cfg.trampleRange || 80;
+          if (dist <= trampleRange) {
+            const trampleDmg = Math.floor((cfg.trampleDamage || 15) * (1 + enemy.currentPhase * 0.25));
+            if (!this.isPlayerInvulnerable()) {
+              this.seedlingStats.hp -= trampleDmg;
+              this.showDamageNumber(this.seedling.x, this.seedling.y - 50, trampleDmg, '#FF6644');
+            }
+          }
+          // Slam visual: expanding ring
+          const ring = this.add.circle(enemy.sprite.x, enemy.sprite.y, 10, 0x2A5020, 0.4).setDepth(6);
+          this.tweens.add({ targets: ring, scale: trampleRange / 10, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
+          this.shakeCamera(4, 100);
+          // Ground crack particles
+          for (let i = 0; i < 6; i++) {
+            this.spawnParticle(
+              enemy.sprite.x + (Math.random() - 0.5) * 50,
+              enemy.sprite.y + (Math.random() - 0.5) * 50,
+              'particle_hit', 0x886644, 1
+            );
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  // Deep Mycelium: teleports around arena, leaving spore clouds
+  updateBossTeleporter(enemy, time, dt, dx, dy, dist) {
+    const cfg = enemy.teleporterConfig || {};
+    if (!enemy.bossMovementState) {
+      enemy.bossMovementState = 'idle';
+      enemy.bossMovementTimer = 0;
+    }
+    enemy.bossMovementTimer += dt * 1000;
+
+    switch (enemy.bossMovementState) {
+      case 'idle': {
+        // Slow approach
+        this.moveEnemyToward(enemy, dx, dy, dist, dt, 0.5);
+        if (dist <= enemy.data.attackRange) {
+          this.performEnemyMeleeAttack(enemy, time, dist);
+        }
+        // Teleport interval scales down with phase
+        const interval = Math.max(800, (cfg.teleportInterval || 5000) - enemy.currentPhase * 800);
+        if (enemy.bossMovementTimer > interval) {
+          enemy.bossMovementState = 'windup';
+          enemy.bossMovementTimer = 0;
+          // Telegraph: boss shrinks and flashes
+          this.tweens.add({
+            targets: enemy.sprite, scaleX: 0.8, scaleY: 0.8, alpha: 0.4,
+            duration: cfg.teleportWindup || 600, ease: 'Sine.easeIn',
+          });
+        }
+        break;
+      }
+      case 'windup': {
+        // Frozen in place during windup
+        if (enemy.bossMovementTimer > (cfg.teleportWindup || 600)) {
+          // Leave hazard at departure point
+          this.spawnArenaHazard(
+            enemy.sprite.x, enemy.sprite.y,
+            cfg.hazardRadius || 50, cfg.hazardDps || 4,
+            cfg.hazardDuration || 6000, cfg.hazardColor || 0xCCAA22
+          );
+          // Cap hazards
+          const maxH = cfg.maxHazards || 5;
+          while (this.groundHazards.length > maxH) {
+            const oldest = this.groundHazards.shift();
+            if (oldest.sprite?.active) oldest.sprite.destroy();
+            if (oldest.border?.active) oldest.border.destroy();
+          }
+          // Pick new position — random arena location, min distance from current
+          const bounds = this.arenaBounds;
+          let nx, ny, attempts = 0;
+          do {
+            nx = Phaser.Math.Between(bounds.x + 40, bounds.right - 40);
+            ny = Phaser.Math.Between(bounds.y + 40, bounds.bottom - 40);
+            attempts++;
+          } while (
+            Math.sqrt((nx - enemy.sprite.x) ** 2 + (ny - enemy.sprite.y) ** 2) < (cfg.minTeleportDist || 100) &&
+            attempts < 20
+          );
+          // Teleport
+          enemy.sprite.x = nx;
+          enemy.sprite.y = ny;
+          enemy.bossMovementState = 'arriving';
+          enemy.bossMovementTimer = 0;
+          // Arrival burst
+          enemy.sprite.setAlpha(0.2).setScale(0.6);
+          this.tweens.add({
+            targets: enemy.sprite, scaleX: 1.3, scaleY: 1.3, alpha: 1,
+            duration: 300, ease: 'Back.easeOut',
+          });
+          const ring = this.add.circle(nx, ny, 10, enemy.data.color, 0.5).setDepth(6);
+          this.tweens.add({ targets: ring, scale: 5, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
+          this.shakeCamera(3, 80);
+        }
+        break;
+      }
+      case 'arriving': {
+        // Brief invulnerable moment on arrival
+        if (enemy.bossMovementTimer > 200) {
+          enemy.bossMovementState = 'idle';
+          enemy.bossMovementTimer = 0;
+        }
+        break;
+      }
+    }
+  }
+
+  // Blight Lord: circles the player, spiraling inward in final phase
+  updateBossOrbiter(enemy, time, dt, dx, dy, dist) {
+    const cfg = enemy.orbiterConfig || {};
+    const isCollapsing = cfg.collapsePhase >= 0 && enemy.currentPhase >= cfg.collapsePhase;
+
+    // Orbit parameters
+    let targetRadius = cfg.orbitRadius || 130;
+    if (isCollapsing) {
+      // Spiral inward over time
+      if (!enemy._collapseOffset) enemy._collapseOffset = 0;
+      enemy._collapseOffset += (cfg.collapseRate || 15) * dt;
+      targetRadius = Math.max(enemy.data.attackRange * 0.8, targetRadius - enemy._collapseOffset);
+    }
+
+    // Reverse orbit direction on phase 1
+    if (enemy.currentPhase >= 1 && enemy.orbitDirection === 1) {
+      enemy.orbitDirection = -1;
+    }
+
+    // Update angle
+    const speed = (cfg.orbitSpeed || 1.2) * enemy.slowFactor * enemy.orbitDirection;
+    enemy.orbitAngle += speed * dt;
+
+    // Calculate target position on orbit
+    const targetX = this.seedling.x + Math.cos(enemy.orbitAngle) * targetRadius;
+    const targetY = this.seedling.y + Math.sin(enemy.orbitAngle) * targetRadius;
+
+    // Smoothly move toward orbit position
+    const toX = targetX - enemy.sprite.x;
+    const toY = targetY - enemy.sprite.y;
+    const toDist = Math.sqrt(toX * toX + toY * toY) || 1;
+    const moveSpeed = enemy.speed * enemy.slowFactor * 1.5 * dt;
+    enemy.sprite.x += (toX / toDist) * Math.min(moveSpeed, toDist);
+    enemy.sprite.y += (toY / toDist) * Math.min(moveSpeed, toDist);
+    this.clampEnemyPosition(enemy);
+
+    // Void trail particles
+    if (Math.random() < 0.15) {
+      this.spawnParticle(enemy.sprite.x, enemy.sprite.y, 'particle_hit', 0xCC88FF, 1);
+    }
+
+    // Melee when close enough (collapse phase or orbit is tight)
+    if (dist <= enemy.data.attackRange) {
+      this.performEnemyMeleeAttack(enemy, time, dist);
+    }
+  }
+
+  // Canopy Queen: flies in wide orbits, periodically dive-bombs
+  updateBossDiver(enemy, time, dt, dx, dy, dist) {
+    const cfg = enemy.diverConfig || {};
+    if (!enemy.bossMovementState) {
+      enemy.bossMovementState = 'orbiting';
+      enemy.bossMovementTimer = 0;
+      enemy.orbitAngle = Math.atan2(-dy, -dx);
+      enemy._divesFired = false;
+    }
+    enemy.bossMovementTimer += dt * 1000;
+
+    const orbitRange = cfg.orbitRadius || 170;
+    const diveSpeed = (cfg.diveSpeed || 300) * enemy.slowFactor;
+
+    switch (enemy.bossMovementState) {
+      case 'orbiting': {
+        // Fly in wide orbit
+        const orbitSpeed = enemy.speed * 0.003 * dt * enemy.slowFactor;
+        enemy.orbitAngle += orbitSpeed;
+        const targetX = this.seedling.x + Math.cos(enemy.orbitAngle) * orbitRange;
+        const targetY = this.seedling.y + Math.sin(enemy.orbitAngle) * orbitRange;
+        const toX = targetX - enemy.sprite.x;
+        const toY = targetY - enemy.sprite.y;
+        const tDist = Math.sqrt(toX * toX + toY * toY) || 1;
+        const speed = enemy.speed * enemy.slowFactor * dt;
+        enemy.sprite.x += (toX / tDist) * speed;
+        enemy.sprite.y += (toY / tDist) * speed;
+        this.clampEnemyPosition(enemy);
+
+        // Dive cooldown scales with phase
+        const cooldown = Math.max(800, (cfg.diveCooldown || 4000) - enemy.currentPhase * 600);
+        if (enemy.bossMovementTimer > cooldown) {
+          enemy.bossMovementState = 'winding_up';
+          enemy.bossMovementTimer = 0;
+        }
+        break;
+      }
+      case 'winding_up': {
+        // Telegraph: alpha pulse, slow orbit
+        enemy.sprite.setAlpha(0.5 + 0.5 * Math.sin(enemy.bossMovementTimer * 0.02));
+        const windUp = 500;
+        if (enemy.bossMovementTimer > windUp) {
+          const offset = (Math.random() - 0.5) * 50;
+          enemy._diveTargetX = this.seedling.x + offset;
+          enemy._diveTargetY = this.seedling.y + offset;
+          enemy.bossMovementState = 'diving';
+          enemy.bossMovementTimer = 0;
+          enemy._divesFired = false;
+          enemy.sprite.setAlpha(1);
+        }
+        break;
+      }
+      case 'diving': {
+        // Fast dash toward dive target
+        const ddx = enemy._diveTargetX - enemy.sprite.x;
+        const ddy = enemy._diveTargetY - enemy.sprite.y;
+        const dd = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+        const sp = diveSpeed * dt;
+        enemy.sprite.x += (ddx / dd) * sp;
+        enemy.sprite.y += (ddy / dd) * sp;
+        this.clampEnemyPosition(enemy);
+
+        // Hit player when close
+        if (!enemy._divesFired && dist < enemy.data.attackRange * 2) {
+          this.performEnemyMeleeAttack(enemy, time, dist);
+          enemy._divesFired = true;
+          this.shakeCamera(4, 80);
+        }
+
+        if (dd < 25 || enemy.bossMovementTimer > 1500) {
+          enemy.bossMovementState = 'recovering';
+          enemy.bossMovementTimer = 0;
+          enemy.orbitAngle = Math.atan2(
+            enemy.sprite.y - this.seedling.y,
+            enemy.sprite.x - this.seedling.x
+          );
+        }
+        break;
+      }
+      case 'recovering': {
+        // Vulnerability window — slow orbit at close range
+        const recoverRange = 90;
+        enemy.orbitAngle += enemy.speed * 0.002 * dt * enemy.slowFactor;
+        const tx = this.seedling.x + Math.cos(enemy.orbitAngle) * recoverRange;
+        const ty = this.seedling.y + Math.sin(enemy.orbitAngle) * recoverRange;
+        const tox = tx - enemy.sprite.x;
+        const toy = ty - enemy.sprite.y;
+        const td = Math.sqrt(tox * tox + toy * toy) || 1;
+        const sp = enemy.speed * enemy.slowFactor * 0.5 * dt;
+        enemy.sprite.x += (tox / td) * sp;
+        enemy.sprite.y += (toy / td) * sp;
+        this.clampEnemyPosition(enemy);
+
+        const recoveryTime = Math.max(400, (cfg.recoveryTime || 1500) - enemy.currentPhase * 200);
+        if (enemy.bossMovementTimer > recoveryTime) {
+          enemy.bossMovementState = 'orbiting';
+          enemy.bossMovementTimer = 0;
+        }
+        break;
+      }
+    }
+  }
+
+  // World Root: changes movement style each phase
+  updateBossPhaseshift(enemy, time, dt, dx, dy, dist) {
+    const cfg = enemy.phaseshiftConfig || {};
+    const movements = cfg.phaseMovements || ['stalker', 'stalker', 'stalker'];
+    const activeMovement = movements[Math.min(enemy.currentPhase, movements.length - 1)];
+
+    // Reset state when movement style changes
+    if (enemy._lastPhaseMovement !== activeMovement) {
+      const isFirstTime = !enemy._lastPhaseMovement;
+      enemy._lastPhaseMovement = activeMovement;
+      enemy.bossMovementState = null;
+      enemy.bossMovementTimer = 0;
+      enemy._collapseOffset = 0;
+      // Brief glitch effect on transition (skip initial spawn)
+      if (!isFirstTime) {
+        const sprite = enemy.sprite;
+        const origX = sprite.x;
+        this.tweens.add({
+          targets: sprite, x: origX + 8, duration: 30, yoyo: true, repeat: 3,
+          onComplete: () => { sprite.x = origX; },
+        });
+      }
+    }
+
+    // Delegate to the active movement handler
+    switch (activeMovement) {
+      case 'stalker':     this.updateBossStalker(enemy, time, dt, dx, dy, dist); break;
+      case 'orbiter':     this.updateBossOrbiter(enemy, time, dt, dx, dy, dist); break;
+      case 'teleporter':  this.updateBossTeleporter(enemy, time, dt, dx, dy, dist); break;
+      case 'ancient_oak': this.updateBossAncientOak(enemy, time, dt, dx, dy, dist); break;
+      default:            this.updateMeleeBehavior(enemy, time, dt, dx, dy, dist); break;
+    }
+  }
+
   performEnemyMeleeAttack(enemy, time, dist) {
     if (time - enemy.lastAttackTime <= enemy.data.attackSpeed) return;
     if (dist > enemy.data.attackRange) return;
+    if (this.isPlayerInvulnerable()) return;
 
     const damageType = enemy.data.damageType || 'normal';
 
@@ -1832,6 +2716,14 @@ export default class CombatScene extends Phaser.Scene {
     this.seedlingStats.hp -= finalDamage;
     enemy.lastAttackTime = time;
     this.audio.play('playerHit');
+
+    // Regenerative Cambium: heal % max HP when hit
+    if (this.seedlingStats.onHitHealPercent) {
+      const healAmt = Math.floor(this.seedlingStats.maxHp * this.seedlingStats.onHitHealPercent);
+      this.seedlingStats.hp = Math.min(this.seedlingStats.maxHp, this.seedlingStats.hp + healAmt);
+      this.showDamageNumber(this.seedling.x + Phaser.Math.Between(-10, 10), this.seedling.y - 35,
+        `+${healAmt}`, '#66FF66', '10px');
+    }
 
     this.applyPlayerDebuff(enemy);
 
@@ -1930,17 +2822,31 @@ export default class CombatScene extends Phaser.Scene {
         this.tweens.add({ targets: trail, alpha: 0, scale: 0, duration: 200, onComplete: () => trail.destroy() });
       }
 
-      // Check hit against seedling
-      const pdx = this.seedling.x - proj.sprite.x;
-      const pdy = this.seedling.y - proj.sprite.y;
-      const pdist = Math.sqrt(pdx * pdx + pdy * pdy);
+      // Artillery projectiles detonate at target position, not on player contact
+      if (proj.isArtillery) {
+        const toTargetX = proj.targetX - proj.sprite.x;
+        const toTargetY = proj.targetY - proj.sprite.y;
+        const toTargetDist = Math.sqrt(toTargetX * toTargetX + toTargetY * toTargetY);
+        if (toTargetDist < 15 || proj.lifetime > 3000) {
+          this.detonateArtilleryProjectile(proj);
+          proj.sprite.destroy();
+          this.enemyProjectiles.splice(i, 1);
+          continue;
+        }
+        // Skip normal player-hit check for artillery
+      } else {
+        // Check hit against seedling
+        const pdx = this.seedling.x - proj.sprite.x;
+        const pdy = this.seedling.y - proj.sprite.y;
+        const pdist = Math.sqrt(pdx * pdx + pdy * pdy);
 
-      if (pdist < 15) {
-        // Hit the player
-        this.applyEnemyProjectileDamage(proj);
-        proj.sprite.destroy();
-        this.enemyProjectiles.splice(i, 1);
-        continue;
+        if (pdist < 15) {
+          // Hit the player
+          this.applyEnemyProjectileDamage(proj);
+          proj.sprite.destroy();
+          this.enemyProjectiles.splice(i, 1);
+          continue;
+        }
       }
 
       // Remove if out of bounds or expired
@@ -1953,7 +2859,83 @@ export default class CombatScene extends Phaser.Scene {
     }
   }
 
+  detonateArtilleryProjectile(proj) {
+    const x = proj.sprite.x;
+    const y = proj.sprite.y;
+    const radius = proj.artilleryRadius || 55;
+
+    // Impact damage if player is in blast radius
+    const playerDist = Math.sqrt((this.seedling.x - x) ** 2 + (this.seedling.y - y) ** 2);
+    if (playerDist <= radius) {
+      this.applyEnemyProjectileDamage(proj);
+    }
+
+    // Explosion visual
+    const ring = this.add.circle(x, y, 10, proj.hazardColor || 0xFF6644, 0.5).setDepth(6);
+    this.tweens.add({ targets: ring, scale: radius / 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+    this.spawnParticle(x, y, 'particle_hit', proj.hazardColor || 0xFF6644, 6);
+
+    // Create ground hazard zone if hazardDps > 0
+    if (proj.hazardDps > 0 && proj.hazardDuration > 0) {
+      const hazard = this.add.circle(x, y, radius, proj.hazardColor || 0xFF6644, 0.15).setDepth(2);
+      const hazardData = { sprite: hazard, x, y, radius, dps: proj.hazardDps, timer: proj.hazardDuration, color: proj.hazardColor };
+      if (!this.groundHazards) this.groundHazards = [];
+      this.groundHazards.push(hazardData);
+      // Fade out over duration
+      this.tweens.add({ targets: hazard, alpha: 0.05, duration: proj.hazardDuration, onComplete: () => hazard.destroy() });
+    }
+  }
+
+  spawnArenaHazard(x, y, radius, dps, duration, color) {
+    if (!this.groundHazards) this.groundHazards = [];
+    // Cap total hazards to prevent arena flooding
+    const maxTotal = 8;
+    while (this.groundHazards.length >= maxTotal) {
+      const oldest = this.groundHazards.shift();
+      if (oldest.sprite?.active) oldest.sprite.destroy();
+      if (oldest.border?.active) oldest.border.destroy();
+    }
+    const circle = this.add.circle(x, y, radius, color, 0.18).setDepth(2);
+    const border = this.add.circle(x, y, radius, color, 0).setDepth(2);
+    border.setStrokeStyle(1.5, color, 0.35);
+    const hazardData = { sprite: circle, border, x, y, radius, dps, timer: duration, color };
+    this.groundHazards.push(hazardData);
+    // Pulse then fade
+    this.tweens.add({ targets: circle, alpha: 0.08, duration: duration, ease: 'Sine.easeIn' });
+    this.tweens.add({ targets: border, alpha: 0, duration: duration, ease: 'Sine.easeIn', onComplete: () => border.destroy() });
+    // Spawn-in ring effect
+    const ring = this.add.circle(x, y, 5, color, 0.5).setDepth(6);
+    this.tweens.add({ targets: ring, scale: radius / 5, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
+  }
+
+  updateGroundHazards(dt) {
+    if (!this.groundHazards) return;
+    for (let i = this.groundHazards.length - 1; i >= 0; i--) {
+      const h = this.groundHazards[i];
+      h.timer -= dt * 1000;
+      if (h.timer <= 0) {
+        if (h.sprite?.active) h.sprite.destroy();
+        if (h.border?.active) h.border.destroy();
+        this.groundHazards.splice(i, 1);
+        continue;
+      }
+      // Damage player if standing in hazard
+      const playerDist = Math.sqrt((this.seedling.x - h.x) ** 2 + (this.seedling.y - h.y) ** 2);
+      if (playerDist <= h.radius && !this.isPlayerInvulnerable()) {
+        h.dmgAccum = (h.dmgAccum || 0) + h.dps * dt;
+        const dmg = Math.floor(h.dmgAccum);
+        h.dmgAccum -= dmg;
+        if (dmg <= 0) continue;
+        this.seedlingStats.hp -= dmg;
+        if (Math.random() < 0.08) {
+          this.spawnParticle(this.seedling.x, this.seedling.y, 'particle_hit', h.color || 0xFF6644, 1);
+        }
+      }
+    }
+  }
+
   applyEnemyProjectileDamage(proj) {
+    if (this.isPlayerInvulnerable()) return;
     let effectiveArmor = this.seedlingStats.armor || 0;
     if (this.playerDebuffs.corrode.timer > 0) {
       effectiveArmor = Math.max(0, effectiveArmor * (1 - this.playerDebuffs.corrode.armorReduce));
@@ -2027,9 +3009,22 @@ export default class CombatScene extends Phaser.Scene {
 
       if (ability.telegraph > 0) {
         this.showBossTelegraph(enemy, ability, time);
-        this.time.delayedCall(ability.telegraph, () => {
-          if (enemy.hp > 0) this.executeBossAbility(enemy, ability, time);
-        });
+        if (ability.breakable) {
+          this.startBreakBar(enemy, ability);
+          this.time.delayedCall(ability.telegraph, () => {
+            if (enemy.hp <= 0) return;
+            if (enemy.breakBar && enemy.breakBar.abilityId === ability.id) {
+              // Not broken — ability goes through
+              this.cleanupBreakBar(enemy);
+              this.executeBossAbility(enemy, ability, time);
+            }
+            // If breakBar is null, it was broken — ability cancelled
+          });
+        } else {
+          this.time.delayedCall(ability.telegraph, () => {
+            if (enemy.hp > 0) this.executeBossAbility(enemy, ability, time);
+          });
+        }
       } else {
         this.executeBossAbility(enemy, ability, time);
       }
@@ -2041,20 +3036,31 @@ export default class CombatScene extends Phaser.Scene {
 
     if (ability.type === 'aoe' || ability.type === 'debuff_aoe') {
       const radius = ability.radius || 80;
-      // Show warning ring at boss position (or around seedling for large radius)
-      const cx = ability.radius >= 200 ? this.seedling.x : enemy.sprite.x;
-      const cy = ability.radius >= 200 ? this.seedling.y : enemy.sprite.y;
-      const warning = this.add.circle(cx, cy, radius, color, 0.15).setDepth(3);
-      const border = this.add.circle(cx, cy, radius, color, 0).setDepth(3);
-      border.setStrokeStyle(2, color, 0.6);
-      // Pulse the warning
+      // Expanding ring from boss outward — shows blast radius growing
+      const ring = this.add.circle(enemy.sprite.x, enemy.sprite.y, 5, color, 0.4).setDepth(6);
       this.tweens.add({
-        targets: [warning, border],
-        alpha: { from: 0.15, to: 0.3 },
-        duration: ability.telegraph / 2,
-        yoyo: true,
-        onComplete: () => { warning.destroy(); border.destroy(); },
+        targets: ring, scale: radius / 5, alpha: 0.1,
+        duration: ability.telegraph, ease: 'Sine.easeOut',
+        onComplete: () => ring.destroy(),
       });
+      // Boss glows to show it's charging
+      this.tweens.add({
+        targets: enemy.sprite, alpha: 0.4, duration: 120,
+        yoyo: true, repeat: Math.floor(ability.telegraph / 240) - 1,
+      });
+      // Warning flash on seedling if it will be hit
+      const distToPlayer = Math.sqrt(
+        (this.seedling.x - enemy.sprite.x) ** 2 + (this.seedling.y - enemy.sprite.y) ** 2
+      );
+      if (distToPlayer <= radius) {
+        const warn = this.add.circle(this.seedling.x, this.seedling.y, 20, color, 0).setDepth(7);
+        warn.setStrokeStyle(2, color, 0.6);
+        this.tweens.add({
+          targets: warn, alpha: { from: 0.6, to: 0 }, scale: 1.5,
+          duration: ability.telegraph, yoyo: false,
+          onComplete: () => warn.destroy(),
+        });
+      }
     } else if (ability.type === 'projectile_burst') {
       // Flash the boss
       this.tweens.add({
@@ -2070,10 +3076,16 @@ export default class CombatScene extends Phaser.Scene {
         onComplete: () => ring.destroy(),
       });
     } else if (ability.type === 'lightning_storm') {
-      // Flash warning
+      // Warning: crackling energy on boss + warning ring on seedling
       this.tweens.add({
         targets: enemy.sprite,
         alpha: 0.3, duration: 80, yoyo: true, repeat: 3,
+      });
+      const warn = this.add.circle(this.seedling.x, this.seedling.y, 15, 0xFFFF44, 0).setDepth(7);
+      warn.setStrokeStyle(2, 0xFFFF44, 0.5);
+      this.tweens.add({
+        targets: warn, scale: 2.5, alpha: { from: 0.5, to: 0 },
+        duration: ability.telegraph, onComplete: () => warn.destroy(),
       });
     } else if (ability.type === 'buff_self') {
       const ring = this.add.circle(enemy.sprite.x, enemy.sprite.y, 20, color, 0.3).setDepth(6);
@@ -2081,6 +3093,21 @@ export default class CombatScene extends Phaser.Scene {
         targets: ring, scaleX: 0.5, scaleY: 1.5, alpha: 0, duration: ability.telegraph,
         onComplete: () => ring.destroy(),
       });
+    }
+
+    // Extra warning for breakable abilities — pulsing glow tells player "DPS now!"
+    if (ability.breakable) {
+      this.tweens.add({
+        targets: enemy.sprite, alpha: 0.3, duration: 150,
+        yoyo: true, repeat: Math.floor(ability.telegraph / 300) - 1,
+      });
+      // Pulsing ring to signal breakable window
+      const breakRing = this.add.circle(enemy.sprite.x, enemy.sprite.y, 25, 0xFFAA00, 0.5).setDepth(6);
+      this.tweens.add({
+        targets: breakRing, scale: 2.5, alpha: 0, duration: 600,
+        repeat: Math.floor(ability.telegraph / 600) - 1,
+      });
+      this.time.delayedCall(ability.telegraph, () => breakRing.destroy());
     }
   }
 
@@ -2204,16 +3231,33 @@ export default class CombatScene extends Phaser.Scene {
       }
 
       case 'buff_self': {
-        const stat = ability.buffStat;
-        const amount = ability.buffAmount;
         const duration = ability.buffDuration || 3000;
 
-        if (stat === 'armor') {
-          enemy.armor = enemy.baseArmor + amount;
-          enemy.buffTimers.armor = duration;
+        // Support multiple buff stats via buffStats array or single buffStat
+        const buffs = ability.buffStats || [{ stat: ability.buffStat, amount: ability.buffAmount }];
+        for (const { stat, amount } of buffs) {
+          if (stat === 'armor') {
+            enemy.armor = enemy.baseArmor + amount;
+            enemy.buffTimers.armor = duration;
+          } else if (stat === 'regen') {
+            const origRegen = enemy.regen || 0;
+            enemy.regen = origRegen + amount;
+            enemy.buffTimers.regen = duration;
+            this.time.delayedCall(duration, () => {
+              if (enemy.hp > 0) enemy.regen = enemy.baseRegen;
+            });
+          } else if (stat === 'attack') {
+            const origAttack = enemy.data.attack;
+            enemy.data.attack += amount;
+            enemy.buffTimers.attack = duration;
+            this.time.delayedCall(duration, () => {
+              if (enemy.hp > 0) enemy.data.attack = origAttack;
+            });
+          }
         }
 
-        this.showDamageNumber(enemy.sprite.x, enemy.sprite.y - 30, 'SHIELD', '#886644', '12px');
+        const label = ability.buffLabel || 'SHIELD';
+        this.showDamageNumber(enemy.sprite.x, enemy.sprite.y - 30, label, '#886644', '12px');
         const ring = this.add.circle(enemy.sprite.x, enemy.sprite.y, 15, ability.telegraphColor, 0.4).setDepth(6);
         this.tweens.add({ targets: ring, scale: 2, alpha: 0, duration: 300, onComplete: () => ring.destroy() });
         break;
@@ -2249,35 +3293,26 @@ export default class CombatScene extends Phaser.Scene {
       case 'lightning_storm': {
         const count = ability.count || 4;
         const radius = ability.radius || 40;
-        const bounds = this.arenaBounds;
 
         for (let i = 0; i < count; i++) {
-          const strikeX = Phaser.Math.Between(bounds.x + 30, bounds.right - 30);
-          const strikeY = Phaser.Math.Between(bounds.y + 30, bounds.bottom - 30);
+          // Each bolt targets the seedling with slight random offset for visual variety
+          const offsetX = Phaser.Math.Between(-25, 25);
+          const offsetY = Phaser.Math.Between(-25, 25);
+          const strikeX = this.seedling.x + offsetX;
+          const strikeY = this.seedling.y + offsetY;
 
-          // Warning indicator at strike zone
-          const warning = this.add.circle(strikeX, strikeY, radius, 0xFFFF44, 0.2).setDepth(3);
-          this.tweens.add({
-            targets: warning, alpha: 0.5, duration: 400, yoyo: true,
-            onComplete: () => warning.destroy(),
-          });
-
-          // Strike after delay
-          this.time.delayedCall(800 + i * 200, () => {
+          // Strike after staggered delay
+          this.time.delayedCall(400 + i * 300, () => {
             if (enemy.hp <= 0) return;
 
-            // Lightning bolt visual
+            // Lightning bolt visual — drops from above onto strike point
             const bolt = this.add.rectangle(strikeX, strikeY - 40, 4, 80, 0xFFFF44, 0.9).setDepth(7);
             this.tweens.add({ targets: bolt, alpha: 0, duration: 200, onComplete: () => bolt.destroy() });
             const flash = this.add.circle(strikeX, strikeY, 8, 0xFFFF44, 0.8).setDepth(7);
             this.tweens.add({ targets: flash, scale: radius / 8, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
 
-            // Check if player is in radius
-            const pdist = Math.sqrt((this.seedling.x - strikeX) ** 2 + (this.seedling.y - strikeY) ** 2);
-            if (pdist <= radius) {
-              this.applyBossAbilityDamage(ability.damage, 'lightning');
-            }
-
+            // Always hits the player — each strike deals a portion of the total damage
+            this.applyBossAbilityDamage(ability.damage, 'lightning');
             this.shakeCamera(3, 80);
           });
         }
@@ -2286,7 +3321,12 @@ export default class CombatScene extends Phaser.Scene {
     }
   }
 
+  isPlayerInvulnerable() {
+    return this.combatState.phoenixInvulnTimer > 0;
+  }
+
   applyBossAbilityDamage(damage, damageType) {
+    if (this.isPlayerInvulnerable()) return;
     let effectiveArmor = this.seedlingStats.armor || 0;
     if (this.playerDebuffs.corrode.timer > 0) {
       effectiveArmor = Math.max(0, effectiveArmor * (1 - this.playerDebuffs.corrode.armorReduce));
@@ -2316,6 +3356,98 @@ export default class CombatScene extends Phaser.Scene {
     this.shakeCamera(4, 100);
   }
 
+  // ── Breakable Ability System ─────────────────────────────────────
+
+  startBreakBar(enemy, ability) {
+    // Break bar HP scales with boss max HP — tuned so average DPS can break it
+    const breakHp = ability.breakHp || Math.floor(enemy.maxHp * 0.12);
+
+    // Create UI elements attached to the boss
+    const barWidth = 50;
+    const barHeight = 6;
+    const barY = enemy.sprite.y - (enemy.data.size || 20) - 14;
+
+    const barBg = this.add.rectangle(enemy.sprite.x, barY, barWidth, barHeight, 0x222222, 0.8)
+      .setDepth(10).setOrigin(0.5);
+    const barFill = this.add.rectangle(
+      enemy.sprite.x - barWidth / 2, barY, barWidth, barHeight, 0xFF8800, 0.9
+    ).setDepth(11).setOrigin(0, 0.5);
+    const label = this.add.text(enemy.sprite.x, barY - 8, 'BREAK', {
+      fontSize: '9px', fontFamily: 'monospace', color: '#FFAA44',
+    }).setDepth(11).setOrigin(0.5);
+
+    enemy.breakBar = {
+      abilityId: ability.id,
+      hpRemaining: breakHp,
+      hpMax: breakHp,
+      barBg, barFill, label,
+      barWidth,
+    };
+  }
+
+  damageBreakBar(enemy, damage) {
+    const bb = enemy.breakBar;
+    if (!bb) return;
+
+    bb.hpRemaining -= damage;
+
+    // Update fill bar width
+    const pct = Math.max(0, bb.hpRemaining / bb.hpMax);
+    bb.barFill.width = bb.barWidth * pct;
+
+    // Color shifts as bar depletes: orange → yellow → white
+    if (pct < 0.3) {
+      bb.barFill.setFillStyle(0xFFFFAA, 0.9);
+    } else if (pct < 0.6) {
+      bb.barFill.setFillStyle(0xFFDD44, 0.9);
+    }
+
+    if (bb.hpRemaining <= 0) {
+      this.breakBossAbility(enemy);
+    }
+  }
+
+  breakBossAbility(enemy) {
+    const bb = enemy.breakBar;
+    if (!bb) return;
+
+    // Clean up break bar UI
+    bb.barBg.destroy();
+    bb.barFill.destroy();
+    bb.label.destroy();
+    enemy.breakBar = null;
+
+    // Visual + audio feedback
+    this.showDamageNumber(enemy.sprite.x, enemy.sprite.y - 40, 'BROKEN!', '#FFFF44', '14px');
+    const flash = this.add.circle(enemy.sprite.x, enemy.sprite.y, 30, 0xFFFF44, 0.6).setDepth(8);
+    this.tweens.add({
+      targets: flash, scale: 2.5, alpha: 0, duration: 400,
+      onComplete: () => flash.destroy(),
+    });
+    this.shakeCamera(5, 150);
+
+    // Stun the boss briefly after a break
+    enemy.rootTimer = 1.5;
+  }
+
+  updateBreakBarPosition(enemy) {
+    const bb = enemy.breakBar;
+    if (!bb) return;
+    const barY = enemy.sprite.y - (enemy.data.size || 20) - 14;
+    bb.barBg.setPosition(enemy.sprite.x, barY);
+    bb.barFill.setPosition(enemy.sprite.x - bb.barWidth / 2, barY);
+    bb.label.setPosition(enemy.sprite.x, barY - 8);
+  }
+
+  cleanupBreakBar(enemy) {
+    const bb = enemy.breakBar;
+    if (!bb) return;
+    bb.barBg.destroy();
+    bb.barFill.destroy();
+    bb.label.destroy();
+    enemy.breakBar = null;
+  }
+
   // ── Combat ──────────────────────────────────────────────────────
 
   seedlingAttack(time) {
@@ -2330,6 +3462,7 @@ export default class CombatScene extends Phaser.Scene {
     }
 
     const inRange = this.enemies
+      .filter(e => !e.invulnerable)
       .map(e => ({ enemy: e, dist: Phaser.Math.Distance.Between(sx, sy, e.sprite.x, e.sprite.y) }))
       .filter(e => e.dist <= range)
       .sort((a, b) => a.dist - b.dist);
@@ -2337,8 +3470,10 @@ export default class CombatScene extends Phaser.Scene {
     if (inRange.length === 0) return;
 
     const targets = 1 + (this.seedlingStats.extraTargets || 0);
+    const falloff = this.seedlingStats.extraTargetDamageFalloff || 1;
     for (let i = 0; i < Math.min(targets, inRange.length); i++) {
-      this.fireProjectile(sx, sy, inRange[i]);
+      const damageMult = i === 0 ? 1 : Math.pow(falloff, i);
+      this.fireProjectile(sx, sy, inRange[i], damageMult);
     }
 
     this.tweens.add({
@@ -2349,8 +3484,15 @@ export default class CombatScene extends Phaser.Scene {
     });
   }
 
-  fireProjectile(fromX, fromY, targetInfo) {
-    const damageType = this.seedlingStats.primaryDamageType || this.seedlingStats.damageType || 'normal';
+  fireProjectile(fromX, fromY, targetInfo, damageMult = 1) {
+    let damageType = this.seedlingStats.primaryDamageType || this.seedlingStats.damageType || 'normal';
+    // Prismatic Fang: cycle through all damage types each hit
+    if (this.seedlingStats.prismaticCycle) {
+      const types = ['slash', 'fire', 'poison', 'lightning', 'frost', 'void', 'pierce', 'nature'];
+      if (this.prismaticIndex === undefined) this.prismaticIndex = 0;
+      damageType = types[this.prismaticIndex % types.length];
+      this.prismaticIndex++;
+    }
     this.audio.play('fireProjectile', { damageType });
     // Tint projectile based on damage type
     const tintMap = {
@@ -2373,6 +3515,7 @@ export default class CombatScene extends Phaser.Scene {
       target: targetInfo.enemy,
       speed: 500,
       lastTrailTime: 0,
+      damageMult,
     });
   }
 
@@ -2381,7 +3524,7 @@ export default class CombatScene extends Phaser.Scene {
       const proj = this.projectiles[i];
       const target = proj.target;
 
-      if (!target || !target.sprite || !target.sprite.active) {
+      if (!target || !target.sprite || !target.sprite.active || target.invulnerable) {
         proj.sprite.destroy();
         this.projectiles.splice(i, 1);
         continue;
@@ -2414,21 +3557,31 @@ export default class CombatScene extends Phaser.Scene {
           synergyDmgMult += this.seedlingStats.activeSynergies.frozen_grasp.frozenGraspBonus;
         }
 
-        // Primary damage
+        // Primary damage (damageMult from extra target falloff)
         const result = calculateDamage(this.seedlingStats, defenderStats, primaryType);
-        let totalDamage = Math.floor(result.damage * synergyDmgMult);
+        let totalDamage = Math.floor(result.damage * synergyDmgMult * (proj.damageMult || 1));
 
-        if (!result.evaded && !result.immune) {
+        if (!result.evaded) {
           target.hp -= totalDamage;
-          this.applyDamageTypeEffect(primaryType, target, totalDamage);
+          // Damage breakable bar if boss is channeling a breakable ability
+          if (target.isBoss && target.breakBar) {
+            this.damageBreakBar(target, totalDamage);
+          }
+          // Only apply elemental on-hit effects if not immune to the type
+          if (!result.immune) {
+            this.applyDamageTypeEffect(primaryType, target, totalDamage);
+          }
 
           // Secondary damage (30% bonus hit)
           if (secondaryType) {
             const secResult = calculateDamage(this.seedlingStats, defenderStats, secondaryType);
-            if (!secResult.evaded && !secResult.immune) {
+            if (!secResult.evaded) {
               const secDmg = Math.floor(secResult.damage * 0.3 * synergyDmgMult);
               target.hp -= secDmg;
-              this.applyDamageTypeEffect(secondaryType, target, secDmg);
+              if (target.isBoss && target.breakBar) this.damageBreakBar(target, secDmg);
+              if (!secResult.immune) {
+                this.applyDamageTypeEffect(secondaryType, target, secDmg);
+              }
             }
           }
 
@@ -2461,8 +3614,9 @@ export default class CombatScene extends Phaser.Scene {
           // Double strike
           if (this.seedlingStats.doubleStrikeChance && Math.random() < this.seedlingStats.doubleStrikeChance) {
             const ds = calculateDamage(this.seedlingStats, defenderStats, primaryType);
-            if (!ds.evaded && !ds.immune) {
+            if (!ds.evaded) {
               target.hp -= ds.damage;
+              if (target.isBoss && target.breakBar) this.damageBreakBar(target, ds.damage);
               this.showDamageNumber(target.sprite.x + 8, target.sprite.y - 25, ds.damage, '#FFDDAA', '12px');
             }
           }
@@ -2474,6 +3628,16 @@ export default class CombatScene extends Phaser.Scene {
           // Root on hit: freeze enemy in place briefly
           if (this.seedlingStats.rootOnHitDuration && !target.rootTimer) {
             target.rootTimer = this.seedlingStats.rootOnHitDuration / 1000;
+          }
+
+          // On-hit slow (Grasping Roots)
+          if (this.seedlingStats.onHitSlow) {
+            const newSlow = 1 - this.seedlingStats.onHitSlow;
+            if (newSlow < target.slowFactor) {
+              target.slowFactor = newSlow;
+              const baseSlowDur = this.seedlingStats.onHitSlowDuration || 1000;
+              target.slowTimer = target.isBoss ? baseSlowDur * 0.5 : baseSlowDur;
+            }
           }
 
           // Knockback every N hits: push farthest enemy back
@@ -2500,9 +3664,9 @@ export default class CombatScene extends Phaser.Scene {
         }
 
         // Hit effects
-        if (!result.evaded && !result.immune && !result.isCrit) this.audio.play('projectileHit');
-        const dmgColor = result.evaded ? '#888888' : result.immune ? '#666666' : result.isCrit ? '#FFFF00' : getDamageTypeColor(primaryType);
-        const dmgText = result.evaded ? 'DODGE' : result.immune ? 'IMMUNE' : result.isCrit ? `${Math.round(totalDamage)}!` : Math.round(totalDamage).toString();
+        if (!result.evaded && !result.isCrit) this.audio.play('projectileHit');
+        const dmgColor = result.evaded ? '#888888' : result.immune ? '#AAAAAA' : result.isCrit ? '#FFFF00' : getDamageTypeColor(primaryType);
+        const dmgText = result.evaded ? 'DODGE' : result.isCrit ? `${Math.round(totalDamage)}!` : Math.round(totalDamage).toString();
         const dmgSize = result.isCrit ? '18px' : '14px';
         this.showDamageNumber(target.sprite.x, target.sprite.y - 20, dmgText, dmgColor, dmgSize, result.isCrit);
         this.spawnParticle(target.sprite.x, target.sprite.y, 'particle_hit', 0xFFFFFF, 5);
@@ -2521,13 +3685,20 @@ export default class CombatScene extends Phaser.Scene {
         }
 
         // Crit: hitstop + screen flash + camera shake
-        if (result.isCrit && !result.evaded && !result.immune) {
+        if (result.isCrit && !result.evaded) {
           this.audio.play('critHit');
           this.hitstop(50);
           this.shakeCamera(3, 80);
           const { width: cw, height: ch } = this.scale;
           const critFlash = this.add.rectangle(cw / 2, ch / 2, cw, ch, 0xFFFF44, 0.12).setDepth(80);
           this.tweens.add({ targets: critFlash, alpha: 0, duration: 150, onComplete: () => critFlash.destroy() });
+
+          // The Black Thorn: crits apply all DoTs
+          if (this.seedlingStats.critApplyAllDots) {
+            this.applyDamageTypeEffect('slash', target, totalDamage);
+            this.applyDamageTypeEffect('fire', target, totalDamage);
+            this.applyDamageTypeEffect('poison', target, totalDamage);
+          }
         }
 
         proj.sprite.destroy();
@@ -2574,6 +3745,10 @@ export default class CombatScene extends Phaser.Scene {
         const bleedDps = Math.max(1, Math.floor(damage * 0.15));
         target.bleedDps = Math.max(target.bleedDps, bleedDps); // stacking: take highest
         target.bleedTimer = 3000;
+        // Rotfang: bleed also reduces armor
+        if (this.seedlingStats.bleedArmorReduce) {
+          target.armor = Math.max(0, (target.armor || 0) - this.seedlingStats.bleedArmorReduce);
+        }
         this.spawnParticle(target.sprite.x, target.sprite.y, 'particle_hit', 0xFF6644, 2);
         this.audio.play('bleed');
         break;
@@ -2588,9 +3763,10 @@ export default class CombatScene extends Phaser.Scene {
         break;
       }
       case 'frost': {
-        // Slow 40% for 2s
+        // Slow 40% for a short burst
         const slowAmount = 0.40;
-        const duration = 2000 + (this.seedlingStats.activeSynergies?.storm_caller?.stormCallerSlowBonus || 0);
+        const baseDuration = target.isBoss ? 400 : 800;
+        const duration = baseDuration + (this.seedlingStats.activeSynergies?.storm_caller?.stormCallerSlowBonus || 0);
         if (1 - slowAmount < target.slowFactor) {
           target.slowFactor = 1 - slowAmount;
           target.slowTimer = duration;
@@ -2627,7 +3803,7 @@ export default class CombatScene extends Phaser.Scene {
       case 'lightning': {
         this.audio.play('lightning');
         // Chain to 2 nearby enemies at 60% damage
-        let chainTargets = 2 + (this.seedlingStats.activeSynergies?.storm_caller?.stormCallerChains || 0);
+        let chainTargets = 2 + (this.seedlingStats.lightningChains || 0) + (this.seedlingStats.activeSynergies?.storm_caller?.stormCallerChains || 0);
         const chainDamage = Math.floor(damage * 0.6);
         const chainRadius = 120;
         let chainCount = 0;
@@ -2672,42 +3848,26 @@ export default class CombatScene extends Phaser.Scene {
   }
 
   doSporeDamage() {
-    const strikeCount = Math.max(1, this.seedlingStats.effectiveSporeStrikeCount || 1);
     const radius = this.seedlingStats.effectiveSporeStrikeRadius || 60;
-    const bias = this.seedlingStats.sporeTargetBias || 0.7;
     const { width, height } = this.scale;
 
     if (this.enemies.length === 0) return;
 
-    // Find boss if present — first strike always targets the boss
+    // Single strike — prioritize boss, then random enemy
     const boss = this.enemies.find(e => e.isBoss);
-
-    for (let i = 0; i < strikeCount; i++) {
-      let tx, ty;
-      if (i === 0 && boss) {
-        // First strike always targets the boss
-        tx = boss.sprite.x + Phaser.Math.Between(-10, 10);
-        ty = boss.sprite.y + Phaser.Math.Between(-10, 10);
-      } else if (Math.random() < bias && this.enemies.length > 0) {
-        // Targeted: pick random enemy, add jitter
-        const target = this.enemies[Math.floor(Math.random() * this.enemies.length)];
-        tx = target.sprite.x + Phaser.Math.Between(-15, 15);
-        ty = target.sprite.y + Phaser.Math.Between(-15, 15);
-      } else {
-        // Predictive: random point biased toward arena edges
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 0.5 + Math.random() * 0.5;
-        tx = width / 2 + Math.cos(angle) * dist * (width / 2 - 20);
-        ty = height / 2 + Math.sin(angle) * dist * (height / 2 - 20);
-      }
-      tx = Phaser.Math.Clamp(tx, 20, width - 20);
-      ty = Phaser.Math.Clamp(ty, 60, height - 80);
-
-      // Stagger visuals by 50ms per strike for carpet bombing feel
-      this.time.delayedCall(i * 50, () => {
-        this.doSporeStrikeAt(tx, ty, this.seedlingStats.sporeDamage, radius);
-      });
+    let tx, ty;
+    if (boss) {
+      tx = boss.sprite.x + Phaser.Math.Between(-10, 10);
+      ty = boss.sprite.y + Phaser.Math.Between(-10, 10);
+    } else {
+      const target = this.enemies[Math.floor(Math.random() * this.enemies.length)];
+      tx = target.sprite.x + Phaser.Math.Between(-15, 15);
+      ty = target.sprite.y + Phaser.Math.Between(-15, 15);
     }
+    tx = Phaser.Math.Clamp(tx, 20, width - 20);
+    ty = Phaser.Math.Clamp(ty, 60, height - 80);
+
+    this.doSporeStrikeAt(tx, ty, this.seedlingStats.sporeDamage, radius);
   }
 
   doSporeStrikeAt(x, y, damage, radius) {
@@ -2741,6 +3901,7 @@ export default class CombatScene extends Phaser.Scene {
     // Damage enemies in strike zone
     const hitEnemies = [];
     for (const enemy of this.enemies) {
+      if (enemy.invulnerable) continue;
       const dist = Phaser.Math.Distance.Between(x, y, enemy.sprite.x, enemy.sprite.y);
       if (dist <= radius) {
         enemy.hp -= damage;
@@ -2753,7 +3914,7 @@ export default class CombatScene extends Phaser.Scene {
           const newSlow = 1 - this.seedlingStats.sporeSlow;
           if (newSlow < enemy.slowFactor) {
             enemy.slowFactor = newSlow;
-            enemy.slowTimer = 2000;
+            enemy.slowTimer = enemy.isBoss ? 500 : 1000;
           }
         }
 
@@ -2903,7 +4064,7 @@ export default class CombatScene extends Phaser.Scene {
     // Venom DoT
     if (pd.venom.timer > 0) {
       pd.venom.timer -= dtMs;
-      this.seedlingStats.hp -= pd.venom.dps * dt;
+      if (!this.isPlayerInvulnerable()) this.seedlingStats.hp -= pd.venom.dps * dt;
       if (Math.random() < 0.08) {
         this.spawnParticle(this.seedling.x + Phaser.Math.Between(-10, 10),
           this.seedling.y + Phaser.Math.Between(-10, 10), 'particle_poison', 0x8844AA, 1);
@@ -3028,12 +4189,20 @@ export default class CombatScene extends Phaser.Scene {
   // ── Enemy Death ─────────────────────────────────────────────────
 
   onEnemyDeath(enemy, index) {
+    if (enemy.breakBar) this.cleanupBreakBar(enemy);
     this.audio.play(enemy.isBoss ? 'bossKilled' : 'enemyKilled');
-    if (this.seedlingStats.healOnKill) {
-      this.seedlingStats.hp = Math.min(this.seedlingStats.maxHp, this.seedlingStats.hp + this.seedlingStats.healOnKill);
+    if (this.seedlingStats.healOnKill || this.seedlingStats.healOnKillPercent) {
+      let healAmt = this.seedlingStats.healOnKill || 0;
+      if (this.seedlingStats.healOnKillPercent) {
+        healAmt += Math.floor(this.seedlingStats.maxHp * this.seedlingStats.healOnKillPercent);
+      }
+      if (this.seedlingStats.doubleHealOnKill) {
+        healAmt *= 2;
+      }
+      this.seedlingStats.hp = Math.min(this.seedlingStats.maxHp, this.seedlingStats.hp + healAmt);
       this.spawnParticle(this.seedling.x, this.seedling.y, 'particle_heal', 0x66FF66, 4);
       this.showDamageNumber(this.seedling.x + Phaser.Math.Between(-10, 10), this.seedling.y - 35,
-        `+${this.seedlingStats.healOnKill}`, '#66FF66', '12px');
+        `+${healAmt}`, '#66FF66', '12px');
     }
 
     const ex = enemy.sprite.x;
@@ -3081,7 +4250,7 @@ export default class CombatScene extends Phaser.Scene {
       this.shakeCamera(4, 100);
       // Damage seedling if in range
       const distToSeedling = Phaser.Math.Distance.Between(ex, ey, this.seedling.x, this.seedling.y);
-      if (distToSeedling <= expRadius) {
+      if (distToSeedling <= expRadius && !this.isPlayerInvulnerable()) {
         const expDmgReduced = Math.max(1, expDmg - (this.seedlingStats.armor || 0));
         this.seedlingStats.hp -= expDmgReduced;
         this.showDamageNumber(this.seedling.x, this.seedling.y - 50, expDmgReduced, '#FFAA22');
@@ -3191,6 +4360,7 @@ export default class CombatScene extends Phaser.Scene {
           killCount: this.killCount,
           wavesCompleted: this.biomeSequence.length * 4,
           biomeSequence: this.biomeSequence,
+          visualSeed: this.visualSeed,
         });
       });
       return;
@@ -3263,6 +4433,7 @@ export default class CombatScene extends Phaser.Scene {
           traits: this.graftedTraits,
           seedlingHp: this.seedlingStats.hp,
           seedlingMaxHp: this.seedlingStats.maxHp,
+          visualSeed: this.visualSeed,
         });
       });
     });
@@ -3292,11 +4463,35 @@ export default class CombatScene extends Phaser.Scene {
         waveInBiome: this.waveInBiome,
         waveReached: this.biomeIndex * 4 + this.waveInBiome + 1,
         killCount: this.killCount,
+        visualSeed: this.visualSeed,
       });
     });
   }
 
   // ── Helpers ─────────────────────────────────────────────────────
+
+  showPhaseAnnouncement(text, tintColor = 0xFF0044) {
+    const { width, height } = this.scale;
+    const colorStr = '#' + tintColor.toString(16).padStart(6, '0');
+    const announcement = this.add.text(width / 2, height / 2 - 40, text, {
+      fontFamily: 'monospace', fontSize: '20px', color: colorStr, fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(50).setAlpha(0);
+
+    this.tweens.add({
+      targets: announcement,
+      alpha: 1, y: height / 2 - 55,
+      duration: 300, ease: 'Back.easeOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: announcement,
+          alpha: 0, y: height / 2 - 75,
+          duration: 800, delay: 600,
+          onComplete: () => announcement.destroy(),
+        });
+      },
+    });
+  }
 
   showDamageNumber(x, y, text, color = '#FFFFFF', fontSize = '14px', isCrit = false) {
     const xOff = Phaser.Math.Between(-8, 8);
